@@ -32,6 +32,9 @@ class _DragOp {
   DateTime? start;
   DateTime? end;
   Task? task; // for drops from the task list
+
+  /// A moved block is being dragged out of the calendar (to unschedule it).
+  bool outside = false;
 }
 
 /// A scrollable day/week time grid in the style of Notion Calendar.
@@ -40,6 +43,8 @@ class _DragOp {
 ///   bottom edge to change its length. Everything snaps to 15 minutes.
 /// - Drag on empty space to create a new block ([onCreate]).
 /// - Drop a [Task] from a `Draggable<Task>` to schedule it ([onDropTask]).
+/// - Drag a block out past the left edge (onto the task list) to remove
+///   it: [onDragOutside] reports where it is, [onDropOutside] the drop.
 /// - Trackpad: two-finger swipe sideways calls [onSwipe].
 class WeekCalendar extends StatefulWidget {
   const WeekCalendar({
@@ -56,6 +61,8 @@ class WeekCalendar extends StatefulWidget {
     this.onOpen,
     this.onContextMenu,
     this.onSwipe,
+    this.onDragOutside,
+    this.onDropOutside,
     this.hourHeight = 48,
     this.dropDuration = const Duration(hours: 1),
     this.now,
@@ -82,6 +89,13 @@ class WeekCalendar extends StatefulWidget {
 
   /// -1 for previous, +1 for next.
   final void Function(int direction)? onSwipe;
+
+  /// While a block is dragged outside the calendar: the pointer position,
+  /// then null when it comes back or the drag ends.
+  final void Function(CalItem item, Offset? globalPosition)? onDragOutside;
+
+  /// A block was dropped outside the calendar.
+  final void Function(CalItem item, Offset globalPosition)? onDropOutside;
 
   final double hourHeight;
   final Duration dropDuration;
@@ -195,6 +209,25 @@ class WeekCalendarState extends State<WeekCalendar> {
     final (dayIndex, minutes) = slot;
     final days = widget.days;
 
+    if (op.mode == _Mode.move && widget.onDropOutside != null) {
+      final box = context.findRenderObject() as RenderBox?;
+      final outside = box != null && box.globalToLocal(global).dx < 0;
+      if (outside) {
+        // Show the block back in its original spot while it's out.
+        op
+          ..outside = true
+          ..start = op.item!.start
+          ..end = op.item!.end;
+        widget.onDragOutside?.call(op.item!, global);
+        setState(() {});
+        return;
+      }
+      if (op.outside) {
+        op.outside = false;
+        widget.onDragOutside?.call(op.item!, null);
+      }
+    }
+
     switch (op.mode) {
       case _Mode.move:
         final item = op.item!;
@@ -268,6 +301,12 @@ class WeekCalendarState extends State<WeekCalendar> {
     _autoScroll?.cancel();
     _autoScroll = null;
     if (op == null) return;
+    if (op.outside) {
+      widget.onDragOutside?.call(op.item!, null);
+      widget.onDropOutside?.call(op.item!, _lastPointer!);
+      setState(() {});
+      return;
+    }
     final (start, end) = (op.start, op.end);
     if (start == null || end == null) {
       setState(() {});
@@ -289,6 +328,9 @@ class WeekCalendarState extends State<WeekCalendar> {
   }
 
   void _cancel() {
+    if (_op case _DragOp(outside: true, :final item?)) {
+      widget.onDragOutside?.call(item, null);
+    }
     _op = null;
     _autoScroll?.cancel();
     _autoScroll = null;
@@ -299,7 +341,11 @@ class WeekCalendarState extends State<WeekCalendar> {
   void _autoScrollTick() {
     final pointer = _lastPointer;
     final box = _viewportKey.currentContext?.findRenderObject() as RenderBox?;
-    if (_op == null || pointer == null || box == null || !_scroll.hasClients) {
+    if (_op == null ||
+        _op!.outside ||
+        pointer == null ||
+        box == null ||
+        !_scroll.hasClients) {
       return;
     }
     const zone = 48.0;
@@ -477,7 +523,8 @@ class WeekCalendarState extends State<WeekCalendar> {
               item: p.item,
               height: h,
               selected: widget.selectedId == p.item.id,
-              dragging: dragging,
+              dragging: dragging && !op!.outside,
+              faded: dragging && op!.outside,
               onDown: () => widget.onSelect?.call(p.item),
               onOpen: () => widget.onOpen?.call(p.item),
               onContextMenu: (pos) => widget.onContextMenu?.call(p.item, pos),
@@ -567,6 +614,7 @@ class _EventBlock extends StatelessWidget {
     required this.height,
     required this.selected,
     required this.dragging,
+    this.faded = false,
     this.onDown,
     this.onOpen,
     this.onContextMenu,
@@ -580,6 +628,9 @@ class _EventBlock extends StatelessWidget {
   final double height;
   final bool selected;
   final bool dragging;
+
+  /// Being dragged out of the calendar.
+  final bool faded;
   final VoidCallback? onDown;
   final VoidCallback? onOpen;
   final void Function(Offset globalPosition)? onContextMenu;
@@ -673,7 +724,9 @@ class _EventBlock extends StatelessWidget {
               ),
       ),
     );
-    if (item.done) content = Opacity(opacity: 0.55, child: content);
+    if (item.done || faded) {
+      content = Opacity(opacity: faded ? 0.3 : 0.55, child: content);
+    }
 
     final editable = item.editable && onDragStart != null;
     final body = Listener(

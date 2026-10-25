@@ -22,6 +22,7 @@ class TaskPanel extends StatefulWidget {
     required this.onNewTask,
     required this.onToggleTask,
     required this.onManageFeeds,
+    this.unschedule,
   });
 
   final PlannerStore store;
@@ -30,6 +31,10 @@ class TaskPanel extends StatefulWidget {
   final void Function(String project) onNewTask;
   final void Function(Task task, bool done) onToggleTask;
   final VoidCallback onManageFeeds;
+
+  /// Set while a calendar block is dragged out of the calendar: its title
+  /// and whether it's over this panel (dropping removes the session).
+  final ({String title, bool over})? unschedule;
 
   @override
   State<TaskPanel> createState() => _TaskPanelState();
@@ -60,7 +65,7 @@ class _TaskPanelState extends State<TaskPanel> {
         )
         .toList();
 
-    return ColoredBox(
+    final panel = ColoredBox(
       color: theme.colorScheme.surfaceContainerLow,
       child: Column(
         children: [
@@ -158,6 +163,58 @@ class _TaskPanelState extends State<TaskPanel> {
             ),
         ],
       ),
+    );
+    final drop = widget.unschedule;
+    if (drop == null) return panel;
+    final accent = drop.over
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        panel,
+        IgnorePointer(
+          child: Container(
+            margin: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface.withValues(
+                alpha: drop.over ? 0.92 : 0.8,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: accent, width: drop.over ? 2 : 1),
+            ),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.event_busy, size: 32, color: accent),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Drop to unschedule',
+                      style: theme.textTheme.titleMedium!.copyWith(
+                        color: accent,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      drop.title,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'The task stays in your list.',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

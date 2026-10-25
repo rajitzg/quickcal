@@ -110,6 +110,15 @@ class _DemoAppState extends State<DemoApp> {
         session('hw4', 2, 20, 22),
         session('proposal', 4, 14, 16),
         session('cbf', 0, 17, 22),
+        // Something scheduled today whatever day the demo runs.
+        WorkSession(
+          id: 'demo-today',
+          taskId: 'bimanual',
+          title: 'Find bimanual tasks',
+          project: 'Humanoid Safety',
+          start: DateTime(_now.year, _now.month, _now.day, 15),
+          end: DateTime(_now.year, _now.month, _now.day, 16, 30),
+        ),
       ],
       projects: const [
         ProjectCalendar(name: 'Humanoid Safety', color: 0xFFD50000),

@@ -5,8 +5,8 @@ A minimal, fast task list and planner for macOS and Android, synced through Fire
 ![Calendar planner](docs/planner.png)
 
 - **Calendar** (Mac / wide windows): see "Calendar planner" below
-- **Today**: overdue tasks and tasks due today
-- **Upcoming**: the next 7 days by day, then Later and No date
+- **Today**: overdue tasks, tasks due today, and work sessions scheduled today
+- **Upcoming**: the next 7 days, each showing what's due and what's scheduled that day, then Later and Unscheduled
 - **Projects**: open tasks grouped by project (no project = Inbox)
 - **Done**: the 50 most recently completed tasks, which you can reopen
 - **Calendars**: classes and events from any iCal feed (Google, iCloud, Outlook, Canvas) appear on Today and Upcoming, interleaved with tasks by time. Tap an event to see details or to add a task for it. The event name becomes the task's project, so an assignment for "CS 201" files itself under that class.
@@ -51,6 +51,13 @@ Create an account on one device, then sign in with the same email on the other.
 - **Mac:** `flutter build macos --release`, then copy `build/macos/Build/Products/Release/taskflow.app` to `/Applications`.
 - **Android:** `flutter build apk --release`, then install `build/app/outputs/flutter-apk/app-release.apk` on the phone. Or run `flutter install` with the phone connected.
 
+## Due dates vs. scheduled time
+A task has two separate kinds of dates, and the task editor shows them in separate sections:
+- **Due:** the deadline, optionally with a time. It shows in the calendar's all-day row and makes the task overdue once it passes.
+- **Scheduled:** any number of work sessions, meaning when you plan to work on the task. Add, edit or remove them in the editor, or drag them around on the desktop calendar. A session after the due date is flagged.
+
+On the phone, Today and Upcoming list each task on the days it's scheduled, as well as the day it's due. A task that's due and scheduled on the same day appears once.
+
 ## Calendar planner (desktop)
 On the Mac (any window at least 700px wide), the app opens on the **Calendar** view, styled after Notion Calendar.
 
@@ -62,6 +69,7 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 - Drag a block to move it, including to another day.
 - Drag its top or bottom edge to change its length. Everything snaps to 15 minutes.
 - Drag on empty space to draw a new block, then type a new task or pick an existing one.
+- Drag a block back onto the task list to unschedule it. The session is removed, and the task stays.
 - Dragging near the top or bottom edge scrolls the grid.
 
 **Other interactions:**

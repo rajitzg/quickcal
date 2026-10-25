@@ -63,7 +63,7 @@ void main() {
         '10/31',
         '11/1',
         'Later',
-        'No date',
+        'Unscheduled',
       ]);
       expect(titles(sections.first), ['tomorrow']);
       expect(titles(sections[6]), ['in a week']);

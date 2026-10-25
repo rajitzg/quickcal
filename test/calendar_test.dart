@@ -215,6 +215,7 @@ void main() {
           (r) => switch (r) {
             EventEntry(:final event) => event.title,
             TaskEntry(:final task) => task.title,
+            SessionEntry(:final task) => 'session: ${task.title}',
           },
         ),
         ['Fall break', 'Read ch. 5', 'Call advisor', 'CS 201 (moved)'],

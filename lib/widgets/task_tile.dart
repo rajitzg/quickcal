@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../logic/task_views.dart';
 import '../models/task.dart';
+import '../models/work_session.dart';
 
 String formatDue(Task t, DateTime now) =>
     formatWhen(t.due!, now, withTime: t.hasTime);
@@ -70,6 +71,66 @@ class TaskTile extends StatelessWidget {
                 color: isOverdue(task, now) ? scheme.error : null,
               ),
             ),
+      onTap: onTap,
+    );
+  }
+}
+
+/// A scheduled work session in the Today/Upcoming lists: when you plan to
+/// work on the task (as opposed to when it's due).
+class SessionTile extends StatelessWidget {
+  const SessionTile({
+    super.key,
+    required this.session,
+    required this.task,
+    required this.color,
+    required this.onToggle,
+    required this.onTap,
+  });
+
+  final WorkSession session;
+  final Task task;
+  final int color;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final time = DateFormat.jm();
+    final details = [
+      '${time.format(session.start)} – ${time.format(session.end)}',
+      if (task.project.isNotEmpty) task.project,
+      if (task.due != null) 'due ${formatDue(task, now)}',
+    ];
+    return ListTile(
+      leading: Checkbox(
+        value: task.done,
+        side: BorderSide(color: Color(color), width: 2),
+        activeColor: Color(color),
+        onChanged: (v) => onToggle(v ?? false),
+      ),
+      title: Text(task.title),
+      subtitle: Text.rich(
+        TextSpan(
+          children: [
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(Icons.schedule, size: 14, color: Color(color)),
+              ),
+            ),
+            TextSpan(
+              text: details.join(' · '),
+              style: TextStyle(
+                color: isOverdue(task, now) ? scheme.error : null,
+              ),
+            ),
+          ],
+        ),
+      ),
       onTap: onTap,
     );
   }

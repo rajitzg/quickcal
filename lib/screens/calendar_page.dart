@@ -61,6 +61,11 @@ class _CalendarPageState extends State<CalendarPage> {
   late DateTime _focusDay = dateOnly(_now);
   _Span _span = _Span.week;
   String? _selectedId;
+  final _panelKey = GlobalKey();
+
+  /// A block being dragged out of the calendar, and whether it's over the
+  /// task list.
+  ({String title, bool over})? _unschedule;
 
   PlannerStore get store => widget.store;
   DateTime get _now => widget.now ?? DateTime.now();
@@ -170,12 +175,22 @@ class _CalendarPageState extends State<CalendarPage> {
     _schedule(task, start, end);
   }
 
-  void _deleteSession(WorkSession s) {
+  bool _overPanel(Offset global) {
+    final box = _panelKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return false;
+    return (box.localToGlobal(Offset.zero) & box.size).contains(global);
+  }
+
+  void _deleteSession(WorkSession s, {bool unscheduled = false}) {
     setState(() => _selectedId = null);
     _run(store.deleteSession(s));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Removed session for "${s.title}"'),
+        content: Text(
+          unscheduled
+              ? 'Unscheduled "${s.title}"'
+              : 'Removed session for "${s.title}"',
+        ),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () => _run(store.saveSession(s)),
@@ -371,9 +386,11 @@ class _CalendarPageState extends State<CalendarPage> {
               child: Row(
                 children: [
                   SizedBox(
+                    key: _panelKey,
                     width: 300,
                     child: TaskPanel(
                       store: store,
+                      unschedule: _unschedule,
                       feeds: widget.feeds,
                       onEditTask: (t) => widget.editTask(t),
                       onNewTask: (project) => widget.editTask(
@@ -418,6 +435,17 @@ class _CalendarPageState extends State<CalendarPage> {
                               }
                             },
                             onCreate: _createFromSelection,
+                            onDragOutside: (item, pos) => setState(
+                              () => _unschedule = pos == null
+                                  ? null
+                                  : (title: item.title, over: _overPanel(pos)),
+                            ),
+                            onDropOutside: (item, pos) {
+                              final s = _session(item.id);
+                              if (s != null && _overPanel(pos)) {
+                                _deleteSession(s, unscheduled: true);
+                              }
+                            },
                             onDropTask: _schedule,
                           ),
                         ),

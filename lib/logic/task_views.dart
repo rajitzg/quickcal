@@ -1,5 +1,6 @@
 import '../calendar/calendar_event.dart';
 import '../models/task.dart';
+import '../models/work_session.dart';
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -34,18 +35,32 @@ bool isOverdue(Task t, DateTime now) {
       : dateOnly(t.due!).isBefore(dateOnly(now));
 }
 
+/// A scheduled work session paired with its (open) task.
+typedef ScheduledTask = ({WorkSession session, Task task});
+
 class TaskSection {
-  const TaskSection(this.title, this.tasks, {this.events = const []});
+  const TaskSection(
+    this.title,
+    this.tasks, {
+    this.events = const [],
+    this.sessions = const [],
+  });
   final String title;
+
+  /// Tasks due in this section.
   final List<Task> tasks;
 
   /// Calendar events on this section's day (Today/Upcoming only).
   final List<CalendarEvent> events;
 
-  bool get isEmpty => tasks.isEmpty && events.isEmpty;
+  /// Work sessions scheduled on this section's day (Today/Upcoming only).
+  final List<ScheduledTask> sessions;
+
+  bool get isEmpty => tasks.isEmpty && events.isEmpty && sessions.isEmpty;
 }
 
-/// A row in a day's agenda: either a calendar event or a task.
+/// A row in a day's agenda: a calendar event, a task that's due, or a
+/// scheduled work session for a task.
 sealed class AgendaEntry {}
 
 class EventEntry extends AgendaEntry {
@@ -58,19 +73,34 @@ class TaskEntry extends AgendaEntry {
   final Task task;
 }
 
-/// Orders a section for display: all-day events, then tasks without a time,
-/// then timed events and timed tasks interleaved chronologically.
+class SessionEntry extends AgendaEntry {
+  SessionEntry(this.session, this.task);
+  final WorkSession session;
+  final Task task;
+}
+
+/// Orders a section for display: all-day events, then due tasks without a
+/// time, then timed events, timed due tasks and work sessions interleaved
+/// chronologically. A task that's both due and scheduled that day is listed
+/// once, at its session.
 List<AgendaEntry> agenda(TaskSection s) {
+  final scheduled = {for (final x in s.sessions) x.task.id};
+  final due = [
+    for (final t in s.tasks)
+      if (!scheduled.contains(t.id)) t,
+  ];
   final timed = <(DateTime, AgendaEntry)>[
     for (final e in s.events)
       if (!e.allDay) (e.start, EventEntry(e)),
-    for (final t in s.tasks)
+    for (final t in due)
       if (t.hasTime && t.due != null) (t.due!, TaskEntry(t)),
+    for (final x in s.sessions)
+      (x.session.start, SessionEntry(x.session, x.task)),
   ]..sort((a, b) => a.$1.compareTo(b.$1));
   return [
     for (final e in s.events)
       if (e.allDay) EventEntry(e),
-    for (final t in s.tasks)
+    for (final t in due)
       if (!t.hasTime || t.due == null) TaskEntry(t),
     for (final (_, entry) in timed) entry,
   ];
@@ -86,11 +116,28 @@ List<CalendarEvent> eventsOn(List<CalendarEvent> events, DateTime day) {
   ];
 }
 
-/// Overdue and due-today tasks, plus today's events.
+/// Sessions of open tasks that overlap the local calendar day [day].
+List<ScheduledTask> sessionsOn(
+  List<WorkSession> sessions,
+  Map<String, Task> openById,
+  DateTime day,
+) {
+  final start = dateOnly(day);
+  final end = DateTime(start.year, start.month, start.day + 1);
+  return [
+    for (final s in sessions)
+      if (openById[s.taskId] case final task?)
+        if (s.start.isBefore(end) && s.end.isAfter(start))
+          (session: s, task: task),
+  ];
+}
+
+/// Overdue and due-today tasks, plus today's events and work sessions.
 List<TaskSection> todaySections(
   List<Task> open,
   DateTime now, {
   List<CalendarEvent> events = const [],
+  List<WorkSession> sessions = const [],
 }) {
   final today = dateOnly(now);
   final overdue = <Task>[];
@@ -110,27 +157,36 @@ List<TaskSection> todaySections(
       'Today',
       dueToday..sort(compareTasks),
       events: eventsOn(events, today),
+      sessions: sessionsOn(sessions, {for (final t in open) t.id: t}, today),
     ),
   ];
 }
 
-/// One section per day for the next [days] days (starting tomorrow), then
-/// "Later" and "No date". Empty day sections are kept so the week reads as a
-/// calendar; empty Later/No date sections are dropped.
+/// One section per day for the next [days] days (starting tomorrow) with
+/// the tasks due and the work sessions scheduled that day, then "Later"
+/// (due after that) and "Unscheduled" (no due date and nothing scheduled).
+/// Empty day sections are kept so the week reads as a calendar; empty
+/// Later/Unscheduled sections are dropped.
 List<TaskSection> upcomingSections(
   List<Task> open,
   DateTime now, {
   int days = 7,
   required String Function(DateTime day) dayLabel,
   List<CalendarEvent> events = const [],
+  List<WorkSession> sessions = const [],
 }) {
   final tomorrow = DateTime(now.year, now.month, now.day + 1);
+  final openById = {for (final t in open) t.id: t};
+  final hasUpcomingSession = {
+    for (final s in sessions)
+      if (s.end.isAfter(now)) s.taskId,
+  };
   final byDay = List.generate(days, (_) => <Task>[]);
   final later = <Task>[];
-  final undated = <Task>[];
+  final unscheduled = <Task>[];
   for (final t in open) {
     if (t.due == null) {
-      undated.add(t);
+      if (!hasUpcomingSession.contains(t.id)) unscheduled.add(t);
       continue;
     }
     final offset = daysBetween(tomorrow, t.due!);
@@ -149,10 +205,12 @@ List<TaskSection> upcomingSections(
           dayLabel(day),
           byDay[i]..sort(compareTasks),
           events: eventsOn(events, day),
+          sessions: sessionsOn(sessions, openById, day),
         );
       }(),
     if (later.isNotEmpty) TaskSection('Later', later..sort(compareTasks)),
-    if (undated.isNotEmpty) TaskSection('No date', undated..sort(compareTasks)),
+    if (unscheduled.isNotEmpty)
+      TaskSection('Unscheduled', unscheduled..sort(compareTasks)),
   ];
 }
 

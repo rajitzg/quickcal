@@ -11,6 +11,7 @@ import '../data/firestore_planner_store.dart';
 import '../data/planner_store.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
+import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
 import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
@@ -95,10 +96,13 @@ class _HomeScreenState extends State<HomeScreen> {
       task: task,
       isNew: isNew,
       projects: _store.projectNameSuggestions,
+      sessions: _store.sessionsFor(task.id),
+      newSessionId: _store.newSessionId,
     );
     switch (result) {
-      case SaveTask(:final task):
+      case SaveTask(:final task, :final sessions):
         _run(_store.saveTask(task));
+        _saveSessions(task, sessions);
       case DeleteTask():
         final deleted = await _store.deleteTask(task);
         if (!mounted) return;
@@ -117,6 +121,25 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       case null:
         break;
+    }
+  }
+
+  /// Applies the editor's session list: saves new and changed sessions and
+  /// deletes removed ones.
+  void _saveSessions(Task task, List<WorkSession> sessions) {
+    final before = {for (final s in _store.sessionsFor(task.id)) s.id: s};
+    for (final s in sessions) {
+      final old = before.remove(s.id);
+      if (old == null ||
+          old.start != s.start ||
+          old.end != s.end ||
+          old.title != s.title ||
+          old.project != s.project) {
+        _run(_store.saveSession(s));
+      }
+    }
+    for (final removed in before.values) {
+      _run(_store.deleteSession(removed));
     }
   }
 
@@ -280,11 +303,17 @@ class _HomeScreenState extends State<HomeScreen> {
       DateTime(today.year, today.month, today.day + 8),
     );
     final sections = switch (view) {
-      _View.today => todaySections(open, now, events: events),
+      _View.today => todaySections(
+        open,
+        now,
+        events: events,
+        sessions: _store.sessions,
+      ),
       _View.upcoming => upcomingSections(
         open,
         now,
         events: events,
+        sessions: _store.sessions,
         dayLabel: (d) => daysBetween(now, d) == 1
             ? 'Tomorrow · ${DateFormat.MMMd().format(d)}'
             : DateFormat('EEEE · MMM d').format(d),
@@ -309,6 +338,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: ValueKey(task.id),
                 task: task,
                 showProject: view != _View.projects,
+                onToggle: (v) => _toggle(task, v),
+                onTap: () => _edit(task),
+              ),
+              SessionEntry(:final session, :final task) => SessionTile(
+                key: ValueKey('${s.title}/${session.id}'),
+                session: session,
+                task: task,
+                color: _store.project(task.project).color,
                 onToggle: (v) => _toggle(task, v),
                 onTap: () => _edit(task),
               ),
