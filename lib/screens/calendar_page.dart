@@ -61,6 +61,7 @@ class _CalendarPageState extends State<CalendarPage> {
   late DateTime _focusDay = dateOnly(_now);
   _Span _span = _Span.week;
   String? _selectedId;
+  bool _sidebarOpen = true;
   final _calendarKey = GlobalKey<WeekCalendarState>();
   final _panelKey = GlobalKey();
 
@@ -407,28 +408,33 @@ class _CalendarPageState extends State<CalendarPage> {
               },
               child: Row(
                 children: [
-                  SizedBox(
-                    key: _panelKey,
-                    width: 300,
-                    child: TaskPanel(
-                      store: store,
-                      unschedule: _unschedule,
-                      feeds: widget.feeds,
-                      onEditTask: (t) => widget.editTask(t),
-                      onNewTask: (project) => widget.editTask(
-                        Task(
-                          id: store.newTaskId(),
-                          title: '',
-                          project: project,
-                          createdAt: DateTime.now(),
+                  if (_sidebarOpen) ...[
+                    SizedBox(
+                      key: _panelKey,
+                      // Narrower in small windows so the calendar keeps room.
+                      width: MediaQuery.sizeOf(context).width < 1100
+                          ? 250
+                          : 300,
+                      child: TaskPanel(
+                        store: store,
+                        unschedule: _unschedule,
+                        feeds: widget.feeds,
+                        onEditTask: (t) => widget.editTask(t),
+                        onNewTask: (project) => widget.editTask(
+                          Task(
+                            id: store.newTaskId(),
+                            title: '',
+                            project: project,
+                            createdAt: DateTime.now(),
+                          ),
+                          isNew: true,
                         ),
-                        isNew: true,
+                        onToggleTask: (t, v) => _run(store.setDone(t, v)),
+                        onManageFeeds: widget.onManageFeeds,
                       ),
-                      onToggleTask: (t, v) => _run(store.setDone(t, v)),
-                      onManageFeeds: widget.onManageFeeds,
                     ),
-                  ),
-                  const VerticalDivider(width: 1),
+                    const VerticalDivider(width: 1),
+                  ],
                   Expanded(
                     child: Column(
                       children: [
@@ -499,58 +505,92 @@ class _CalendarPageState extends State<CalendarPage> {
         : first.year == last.year
         ? '${DateFormat.MMM().format(first)} – ${DateFormat.yMMM().format(last)}'
         : '${DateFormat.yMMM().format(first)} – ${DateFormat.yMMM().format(last)}';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: [
-          Text(title, style: theme.textTheme.titleLarge),
-          const Spacer(),
-          OutlinedButton(onPressed: _today, child: const Text('Today')),
-          const SizedBox(width: 4),
-          IconButton(
-            tooltip: 'Previous (←)',
-            icon: const Icon(Icons.chevron_left),
-            onPressed: () => _page(-1),
-          ),
-          IconButton(
-            tooltip: 'Next (→)',
-            icon: const Icon(Icons.chevron_right),
-            onPressed: () => _page(1),
-          ),
-          const SizedBox(width: 4),
-          PopupMenuButton<_Span>(
-            tooltip: 'View',
-            initialValue: _span,
-            onSelected: (s) => setState(() => _span = s),
-            itemBuilder: (_) => [
-              for (final s in _Span.values)
-                PopupMenuItem(
-                  value: s,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // In narrow windows the buttons shrink to icons and the title
+        // shortens instead of overflowing.
+        final compact = constraints.maxWidth < 560;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: _sidebarOpen ? 'Hide task list' : 'Show task list',
+                icon: Icon(_sidebarOpen ? Icons.menu_open : Icons.menu),
+                onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  title,
+                  style: compact
+                      ? theme.textTheme.titleMedium
+                      : theme.textTheme.titleLarge,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (compact)
+                IconButton(
+                  tooltip: 'Today (T)',
+                  icon: const Icon(Icons.today),
+                  onPressed: _today,
+                )
+              else
+                OutlinedButton(onPressed: _today, child: const Text('Today')),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Previous (←)',
+                icon: const Icon(Icons.chevron_left),
+                onPressed: () => _page(-1),
+              ),
+              IconButton(
+                tooltip: 'Next (→)',
+                icon: const Icon(Icons.chevron_right),
+                onPressed: () => _page(1),
+              ),
+              const SizedBox(width: 4),
+              PopupMenuButton<_Span>(
+                tooltip: 'View',
+                initialValue: _span,
+                onSelected: (s) => setState(() => _span = s),
+                itemBuilder: (_) => [
+                  for (final s in _Span.values)
+                    PopupMenuItem(
+                      value: s,
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(s.label)),
+                          Text(s.key, style: theme.textTheme.labelSmall),
+                        ],
+                      ),
+                    ),
+                ],
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 6 : 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   child: Row(
                     children: [
-                      Expanded(child: Text(s.label)),
-                      Text(s.key, style: theme.textTheme.labelSmall),
+                      compact
+                          ? const Icon(Icons.view_week_outlined, size: 18)
+                          : Text(_span.label),
+                      const Icon(Icons.expand_more, size: 18),
                     ],
                   ),
                 ),
+              ),
+              ?widget.menu,
             ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                border: Border.all(color: theme.colorScheme.outlineVariant),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Text(_span.label),
-                  const Icon(Icons.expand_more, size: 18),
-                ],
-              ),
-            ),
           ),
-          ?widget.menu,
-        ],
-      ),
+        );
+      },
     );
   }
 }

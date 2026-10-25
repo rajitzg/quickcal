@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../logic/calendar_layout.dart';
 import '../logic/task_views.dart';
@@ -600,6 +600,35 @@ class WeekCalendarState extends State<WeekCalendar>
     );
   }
 
+  /// Narrowest an overlapping block may get before overlapping blocks
+  /// cascade instead of sitting side by side.
+  static const _readableWidth = 72.0;
+
+  /// Left offset and width of [p] within a day column [available] wide.
+  ///
+  /// Overlapping items sit side by side (each slightly wider than its
+  /// column, like Notion Calendar) when that leaves them readable. When it
+  /// wouldn't, they cascade instead: each is shifted right a little and
+  /// keeps a readable width, later ones drawn on top.
+  static (double, double) _place(PlacedItem p, double available) {
+    if (p.columns == 1) return (0, available);
+    final colWidth = available / p.columns;
+    if (colWidth >= _readableWidth) {
+      final left = p.column * colWidth;
+      final last = p.column == p.columns - 1;
+      return (
+        left,
+        last ? colWidth : math.min(colWidth * 1.6, available - left),
+      );
+    }
+    final width = math.min(
+      available,
+      math.max(_readableWidth, available * 0.75),
+    );
+    final step = (available - width) / (p.columns - 1);
+    return (p.column * step, width);
+  }
+
   Widget _buildDays(ThemeData theme, double width, double height) {
     final days = _all;
     final dayWidth = width / days.length;
@@ -664,21 +693,20 @@ class WeekCalendarState extends State<WeekCalendar>
           (p.endMin - p.startMin) * widget.hourHeight / 60,
           minHeight,
         );
-        final colWidth = (dayWidth - 6) / p.columns;
+        final (left, width) = _place(p, dayWidth - 6);
         final dragging = op?.item?.id == p.item.id;
         children.add(
           Positioned(
             key: ValueKey('${p.item.id}#$segment'),
             top: top,
             height: h,
-            left: d * dayWidth + 1 + p.column * colWidth,
-            // Overlapping items overlap slightly, like Notion Calendar.
-            width: p.column == p.columns - 1
-                ? colWidth
-                : math.min(colWidth * 1.6, dayWidth - 6 - p.column * colWidth),
+            left: d * dayWidth + 1 + left,
+            width: width,
             child: _EventBlock(
               item: p.item,
               height: h,
+              width: width,
+              overlapping: p.columns > 1,
               selected: widget.selectedId == p.item.id,
               dragging: dragging && !op!.outside,
               faded: dragging && op!.outside,
@@ -721,6 +749,7 @@ class WeekCalendarState extends State<WeekCalendar>
                 color: color,
               ),
               height: (endMin - startMin) * widget.hourHeight / 60,
+              width: dayWidth - 6,
               selected: false,
               dragging: true,
             ),
@@ -769,8 +798,10 @@ class _EventBlock extends StatelessWidget {
   const _EventBlock({
     required this.item,
     required this.height,
+    required this.width,
     required this.selected,
     required this.dragging,
+    this.overlapping = false,
     this.faded = false,
     this.onDown,
     this.onOpen,
@@ -783,8 +814,12 @@ class _EventBlock extends StatelessWidget {
 
   final CalItem item;
   final double height;
+  final double width;
   final bool selected;
   final bool dragging;
+
+  /// Shares its time with other blocks: outlined so they stay distinct.
+  final bool overlapping;
 
   /// Being dragged out of the calendar.
   final bool faded;
@@ -820,6 +855,17 @@ class _EventBlock extends StatelessWidget {
       color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
       height: 1.2,
     );
+    // Too narrow to wrap whole words: show one clipped line (or nothing),
+    // never words broken into a column of letters.
+    final showText = width >= 22;
+    final narrow =
+        width < 60 ||
+        !_wordsFit(
+          item.title,
+          titleStyle,
+          width - 11, // border, padding and margin
+          MediaQuery.textScalerOf(context),
+        );
 
     Widget content = Container(
       margin: const EdgeInsets.only(right: 1, bottom: 1),
@@ -835,6 +881,8 @@ class _EventBlock extends StatelessWidget {
                   offset: const Offset(0, 4),
                 ),
               ]
+            : overlapping
+            ? [BoxShadow(color: theme.colorScheme.surface, spreadRadius: 1)]
             : null,
       ),
       foregroundDecoration: selected
@@ -846,9 +894,22 @@ class _EventBlock extends StatelessWidget {
               ),
             )
           : null,
-      padding: EdgeInsets.fromLTRB(5, compact ? 1 : 3, 4, 1),
+      padding: EdgeInsets.fromLTRB(narrow ? 3 : 5, compact ? 1 : 3, 2, 1),
       child: ClipRect(
-        child: compact
+        child: !showText
+            ? const SizedBox.expand()
+            : narrow
+            ? Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  item.title,
+                  style: titleStyle,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.clip,
+                ),
+              )
+            : compact
             ? Text.rich(
                 TextSpan(
                   children: [
@@ -955,6 +1016,23 @@ class _EventBlock extends StatelessWidget {
   }
 }
 
+/// Whether every word of [text] fits on a line [width] wide.
+bool _wordsFit(String text, TextStyle style, double width, TextScaler scaler) {
+  for (final word in text.split(RegExp(r'\s+'))) {
+    if (word.isEmpty) continue;
+    final painter = TextPainter(
+      text: TextSpan(text: word, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout();
+    final w = painter.width;
+    painter.dispose();
+    if (w > width) return false;
+  }
+  return true;
+}
+
 class _DayHeader extends StatelessWidget {
   const _DayHeader({
     required this.days,
@@ -969,7 +1047,6 @@ class _DayHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return SizedBox(
       height: 44,
       child: Row(
@@ -981,46 +1058,7 @@ class _DayHeader extends StatelessWidget {
                 children: [
                   for (final d in days)
                     Expanded(
-                      child: Center(
-                        child: () {
-                          final isToday = dateOnly(d) == dateOnly(now);
-                          final style = theme.textTheme.titleSmall!.copyWith(
-                            color: isToday
-                                ? null
-                                : theme.colorScheme.onSurface.withValues(
-                                    alpha: 0.6,
-                                  ),
-                            fontWeight: isToday
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                          );
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(DateFormat.E().format(d), style: style),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: isToday
-                                    ? BoxDecoration(
-                                        color: const Color(0xFFE5484D),
-                                        borderRadius: BorderRadius.circular(6),
-                                      )
-                                    : null,
-                                child: Text(
-                                  '${d.day}',
-                                  style: style.copyWith(
-                                    color: isToday ? Colors.white : null,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        }(),
-                      ),
+                      child: _DayLabel(day: d, now: now),
                     ),
                 ],
               ),
@@ -1028,6 +1066,73 @@ class _DayHeader extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// "Mon 26" when there's room; weekday stacked over the date when the
+/// column is narrow; scaled down rather than overflowing when tiny.
+class _DayLabel extends StatelessWidget {
+  const _DayLabel({required this.day, required this.now});
+  final DateTime day;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isToday = dateOnly(day) == dateOnly(now);
+    final style = theme.textTheme.titleSmall!.copyWith(
+      color: isToday
+          ? null
+          : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+      fontWeight: isToday ? FontWeight.w600 : FontWeight.w400,
+    );
+    final date = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: isToday
+          ? BoxDecoration(
+              color: const Color(0xFFE5484D),
+              borderRadius: BorderRadius.circular(6),
+            )
+          : null,
+      child: Text(
+        '${day.day}',
+        style: style.copyWith(color: isToday ? Colors.white : null),
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 84;
+        final label = wide
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(DateFormat.E().format(day), style: style),
+                  const SizedBox(width: 6),
+                  date,
+                ],
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    constraints.maxWidth >= 34
+                        ? DateFormat.E().format(day)
+                        : DateFormat.EEEEE().format(day),
+                    style: theme.textTheme.labelSmall!.copyWith(
+                      color: style.color,
+                    ),
+                  ),
+                  date,
+                ],
+              );
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: FittedBox(fit: BoxFit.scaleDown, child: label),
+          ),
+        );
+      },
     );
   }
 }

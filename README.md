@@ -61,7 +61,7 @@ On the phone, Today and Upcoming list each task on the days it's scheduled, as w
 ## Calendar planner (desktop)
 On the Mac (any window at least 700px wide), the app opens on the **Calendar** view, styled after Notion Calendar.
 
-**Layout:** open tasks are on the left, grouped by project, with a week grid on the right.
+**Layout:** open tasks are on the left, grouped by project, with a week grid on the right. The ☰ button hides the task list to give the calendar more room. In narrow windows, overlapping events cascade, each shifted right a little, instead of being squeezed into unreadable slivers.
 
 **Scheduling:**
 - Drag a task onto the grid to schedule a one-hour **work session**.

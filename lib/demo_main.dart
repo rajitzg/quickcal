@@ -167,6 +167,10 @@ class _DemoAppState extends State<DemoApp> {
         weekly('Climb', [0, 2], 8, 10),
         weekly('ARUW Vision Meeting', [2], 17.5, 20.5),
         weekly('Aaron - TRI Franka', [1, 3], 14, 17),
+        // A busy afternoon, to show how overlapping events stack.
+        weekly('Office hours', [3], 15, 17),
+        weekly('Reading group', [3], 15.5, 16.5),
+        weekly('1:1 with advisor', [3], 16, 16.5),
       ]),
     };
   }
