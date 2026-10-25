@@ -5,9 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../calendar/calendar_controller.dart';
+import '../calendar/calendar_event.dart';
 import '../data/task_repository.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
+import 'calendars_screen.dart';
+import '../widgets/event_tile.dart';
 import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
 
@@ -35,8 +39,16 @@ class _HomeScreenState extends State<HomeScreen> {
   late final TaskRepository _repo = TaskRepository(widget.uid);
   late final Stream<List<Task>> _open = _repo.watchOpen();
   late final Stream<List<Task>> _completed = _repo.watchRecentlyCompleted();
+  late final CalendarController _calendar = CalendarController(widget.uid)
+    ..start();
   _View _view = _View.today;
   List<Task> _latestOpen = const [];
+
+  @override
+  void dispose() {
+    _calendar.dispose();
+    super.dispose();
+  }
 
   void _run(Future<void> write) {
     unawaited(
@@ -88,12 +100,41 @@ class _HomeScreenState extends State<HomeScreen> {
     _edit(task, isNew: true);
   }
 
+  /// Shows event details; "Add a task" prefills the event's name as the
+  /// project (e.g. a class) and its day as the due date.
+  Future<void> _openEvent(CalendarEvent event) async {
+    final feed = _calendar.feed(event.feedId);
+    final addTask = await showEventDetails(context, event, feed);
+    if (addTask != true || !mounted) return;
+    await _edit(
+      Task(
+        id: _repo.newId(),
+        title: '',
+        project: event.title,
+        due: dateOnly(event.start),
+        createdAt: DateTime.now(),
+      ),
+      isNew: true,
+    );
+  }
+
+  void _openCalendars() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => CalendarsScreen(controller: _calendar),
+    ),
+  );
+
   void _toggle(Task task, bool done) => _run(_repo.setDone(task, done));
 
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 700;
-    final body = _view == _View.done ? _buildDone() : _buildOpen();
+    final body = _view == _View.done
+        ? _buildDone()
+        : ListenableBuilder(
+            listenable: _calendar,
+            builder: (context, _) => _buildOpen(),
+          );
 
     return CallbackShortcuts(
       bindings: {
@@ -107,8 +148,14 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Text(_view.label),
             actions: [
               PopupMenuButton<String>(
-                onSelected: (_) => FirebaseAuth.instance.signOut(),
+                onSelected: (v) => v == 'calendars'
+                    ? _openCalendars()
+                    : FirebaseAuth.instance.signOut(),
                 itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'calendars',
+                    child: Text('Calendars…'),
+                  ),
                   PopupMenuItem(
                     value: 'signout',
                     child: Text(
@@ -178,41 +225,59 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         _latestOpen = snap.data!;
         final now = DateTime.now();
+        final today = dateOnly(now);
+        final events = _calendar.eventsBetween(
+          today,
+          DateTime(today.year, today.month, today.day + 8),
+        );
         final sections = switch (_view) {
-          _View.today => todaySections(_latestOpen, now),
+          _View.today => todaySections(_latestOpen, now, events: events),
           _View.upcoming => upcomingSections(
             _latestOpen,
             now,
-            dayLabel: (d) => d.difference(dateOnly(now)).inDays == 1
+            events: events,
+            dayLabel: (d) => daysBetween(now, d) == 1
                 ? 'Tomorrow · ${DateFormat.MMMd().format(d)}'
                 : DateFormat('EEEE · MMM d').format(d),
           ),
           _View.projects => projectSections(_latestOpen),
           _View.done => const <TaskSection>[],
         };
-        if (sections.every((s) => s.tasks.isEmpty) && _view != _View.upcoming) {
+        if (sections.every((s) => s.isEmpty) && _view != _View.upcoming) {
           return _message(
             _view == _View.today
                 ? 'Nothing due today 🎉'
                 : 'No open tasks. Press + to add one.',
           );
         }
-        return ListView(
+        final list = ListView(
           padding: const EdgeInsets.only(bottom: 88),
           children: [
-            for (final s in sections) ...[
+            for (final (i, s) in sections.indexed) ...[
               _header(s.title, s.tasks.length),
-              for (final t in s.tasks)
-                TaskTile(
-                  key: ValueKey(t.id),
-                  task: t,
-                  showProject: _view != _View.projects,
-                  onToggle: (v) => _toggle(t, v),
-                  onTap: () => _edit(t),
-                ),
+              for (final entry in agenda(s))
+                switch (entry) {
+                  TaskEntry(:final task) => TaskTile(
+                    key: ValueKey(task.id),
+                    task: task,
+                    showProject: _view != _View.projects,
+                    onToggle: (v) => _toggle(task, v),
+                    onTap: () => _edit(task),
+                  ),
+                  EventEntry(:final event) => EventTile(
+                    key: ValueKey('${s.title}/${event.id}'),
+                    event: event,
+                    feed: _calendar.feed(event.feedId),
+                    day: _sectionDay(today, i),
+                    onTap: () => _openEvent(event),
+                  ),
+                },
             ],
           ],
         );
+        return _view == _View.projects
+            ? list
+            : RefreshIndicator(onRefresh: _calendar.refresh, child: list);
       },
     );
   }
@@ -244,6 +309,12 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
   }
+
+  /// The calendar day a Today/Upcoming section shows. Today's sections end
+  /// with "Today"; Upcoming's day sections start tomorrow.
+  DateTime _sectionDay(DateTime today, int index) => _view == _View.today
+      ? today
+      : DateTime(today.year, today.month, today.day + 1 + index);
 
   Widget _header(String title, int count) {
     final theme = Theme.of(context);

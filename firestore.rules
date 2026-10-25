@@ -1,9 +1,10 @@
 rules_version = '2';
 
-// Each signed-in user can read and write only their own tasks.
+// Each signed-in user can read and write only their own data
+// (tasks and settings such as calendar subscriptions).
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/tasks/{taskId} {
+    match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
   }

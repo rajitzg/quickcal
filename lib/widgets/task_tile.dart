@@ -6,7 +6,7 @@ import '../models/task.dart';
 
 String formatDue(Task t, DateTime now) {
   final due = t.due!;
-  final days = dateOnly(due).difference(dateOnly(now)).inDays;
+  final days = daysBetween(now, due);
   final String day;
   if (days == 0) {
     day = 'Today';

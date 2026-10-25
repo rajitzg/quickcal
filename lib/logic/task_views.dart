@@ -1,6 +1,15 @@
+import '../calendar/calendar_event.dart';
 import '../models/task.dart';
 
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// Whole calendar days from [from] to [to]. Uses UTC dates so a 23- or
+/// 25-hour day around a daylight-saving change still counts as one day.
+int daysBetween(DateTime from, DateTime to) => DateTime.utc(
+  to.year,
+  to.month,
+  to.day,
+).difference(DateTime.utc(from.year, from.month, from.day)).inDays;
 
 /// Sorts by due date (undated last), timed tasks before all-day ones on the
 /// same day, then by creation time.
@@ -26,13 +35,63 @@ bool isOverdue(Task t, DateTime now) {
 }
 
 class TaskSection {
-  const TaskSection(this.title, this.tasks);
+  const TaskSection(this.title, this.tasks, {this.events = const []});
   final String title;
   final List<Task> tasks;
+
+  /// Calendar events on this section's day (Today/Upcoming only).
+  final List<CalendarEvent> events;
+
+  bool get isEmpty => tasks.isEmpty && events.isEmpty;
 }
 
-/// Overdue and due-today tasks.
-List<TaskSection> todaySections(List<Task> open, DateTime now) {
+/// A row in a day's agenda: either a calendar event or a task.
+sealed class AgendaEntry {}
+
+class EventEntry extends AgendaEntry {
+  EventEntry(this.event);
+  final CalendarEvent event;
+}
+
+class TaskEntry extends AgendaEntry {
+  TaskEntry(this.task);
+  final Task task;
+}
+
+/// Orders a section for display: all-day events, then tasks without a time,
+/// then timed events and timed tasks interleaved chronologically.
+List<AgendaEntry> agenda(TaskSection s) {
+  final timed = <(DateTime, AgendaEntry)>[
+    for (final e in s.events)
+      if (!e.allDay) (e.start, EventEntry(e)),
+    for (final t in s.tasks)
+      if (t.hasTime && t.due != null) (t.due!, TaskEntry(t)),
+  ]..sort((a, b) => a.$1.compareTo(b.$1));
+  return [
+    for (final e in s.events)
+      if (e.allDay) EventEntry(e),
+    for (final t in s.tasks)
+      if (!t.hasTime || t.due == null) TaskEntry(t),
+    for (final (_, entry) in timed) entry,
+  ];
+}
+
+/// Events overlapping the local calendar day [day].
+List<CalendarEvent> eventsOn(List<CalendarEvent> events, DateTime day) {
+  final start = dateOnly(day);
+  final end = DateTime(start.year, start.month, start.day + 1);
+  return [
+    for (final e in events)
+      if (e.overlaps(start, end)) e,
+  ];
+}
+
+/// Overdue and due-today tasks, plus today's events.
+List<TaskSection> todaySections(
+  List<Task> open,
+  DateTime now, {
+  List<CalendarEvent> events = const [],
+}) {
   final today = dateOnly(now);
   final overdue = <Task>[];
   final dueToday = <Task>[];
@@ -47,7 +106,11 @@ List<TaskSection> todaySections(List<Task> open, DateTime now) {
   }
   return [
     if (overdue.isNotEmpty) TaskSection('Overdue', overdue..sort(compareTasks)),
-    TaskSection('Today', dueToday..sort(compareTasks)),
+    TaskSection(
+      'Today',
+      dueToday..sort(compareTasks),
+      events: eventsOn(events, today),
+    ),
   ];
 }
 
@@ -59,8 +122,9 @@ List<TaskSection> upcomingSections(
   DateTime now, {
   int days = 7,
   required String Function(DateTime day) dayLabel,
+  List<CalendarEvent> events = const [],
 }) {
-  final tomorrow = dateOnly(now).add(const Duration(days: 1));
+  final tomorrow = DateTime(now.year, now.month, now.day + 1);
   final byDay = List.generate(days, (_) => <Task>[]);
   final later = <Task>[];
   final undated = <Task>[];
@@ -69,7 +133,7 @@ List<TaskSection> upcomingSections(
       undated.add(t);
       continue;
     }
-    final offset = dateOnly(t.due!).difference(tomorrow).inDays;
+    final offset = daysBetween(tomorrow, t.due!);
     if (offset < 0) continue; // today or overdue: shown on the Today tab
     if (offset < days) {
       byDay[offset].add(t);
@@ -79,10 +143,14 @@ List<TaskSection> upcomingSections(
   }
   return [
     for (var i = 0; i < days; i++)
-      TaskSection(
-        dayLabel(tomorrow.add(Duration(days: i))),
-        byDay[i]..sort(compareTasks),
-      ),
+      () {
+        final day = DateTime(tomorrow.year, tomorrow.month, tomorrow.day + i);
+        return TaskSection(
+          dayLabel(day),
+          byDay[i]..sort(compareTasks),
+          events: eventsOn(events, day),
+        );
+      }(),
     if (later.isNotEmpty) TaskSection('Later', later..sort(compareTasks)),
     if (undated.isNotEmpty) TaskSection('No date', undated..sort(compareTasks)),
   ];
