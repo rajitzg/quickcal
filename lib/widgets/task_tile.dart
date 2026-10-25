@@ -4,8 +4,11 @@ import 'package:intl/intl.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
 
-String formatDue(Task t, DateTime now) {
-  final due = t.due!;
+String formatDue(Task t, DateTime now) =>
+    formatWhen(t.due!, now, withTime: t.hasTime);
+
+/// "Today 3:00 PM", "Tomorrow", "Thursday 9:00 AM", "Nov 12".
+String formatWhen(DateTime due, DateTime now, {bool withTime = true}) {
   final days = daysBetween(now, due);
   final String day;
   if (days == 0) {
@@ -19,7 +22,7 @@ String formatDue(Task t, DateTime now) {
   } else {
     day = DateFormat.MMMd().format(due);
   }
-  return t.hasTime ? '$day ${DateFormat.jm().format(due)}' : day;
+  return withTime ? '$day ${DateFormat.jm().format(due)}' : day;
 }
 
 class TaskTile extends StatelessWidget {

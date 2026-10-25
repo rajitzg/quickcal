@@ -7,15 +7,22 @@ import 'package:intl/intl.dart';
 
 import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_event.dart';
-import '../data/task_repository.dart';
+import '../data/firestore_planner_store.dart';
+import '../data/planner_store.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
-import 'calendars_screen.dart';
 import '../widgets/event_tile.dart';
 import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
+import 'calendar_page.dart';
+import 'calendars_screen.dart';
 
 enum _View {
+  calendar(
+    'Calendar',
+    Icons.calendar_view_week_outlined,
+    Icons.calendar_view_week,
+  ),
   today('Today', Icons.today_outlined, Icons.today),
   upcoming('Upcoming', Icons.date_range_outlined, Icons.date_range),
   projects('Projects', Icons.folder_outlined, Icons.folder),
@@ -27,26 +34,48 @@ enum _View {
   final IconData selectedIcon;
 }
 
+/// Screens at least this wide get the side rail and the Calendar planner.
+const _wideLayout = 700.0;
+
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.uid});
+  const HomeScreen({super.key, required this.uid})
+    : store = null,
+      calendar = null,
+      now = null;
+
+  /// Runs on supplied data instead of Firebase (browser demo, tests).
+  const HomeScreen.demo({
+    super.key,
+    required PlannerStore this.store,
+    required CalendarController this.calendar,
+    this.now,
+  }) : uid = '';
+
   final String uid;
+  final PlannerStore? store;
+  final CalendarController? calendar;
+  final DateTime? now;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final TaskRepository _repo = TaskRepository(widget.uid);
-  late final Stream<List<Task>> _open = _repo.watchOpen();
-  late final Stream<List<Task>> _completed = _repo.watchRecentlyCompleted();
-  late final CalendarController _calendar = CalendarController(widget.uid)
-    ..start();
-  _View _view = _View.today;
-  List<Task> _latestOpen = const [];
+  late final PlannerStore _store =
+      widget.store ?? (FirestorePlannerStore(widget.uid)..start());
+  late final CalendarController _calendar =
+      widget.calendar ?? (CalendarController(widget.uid)..start());
+
+  /// Null until the user picks a tab: then wide screens open on the
+  /// Calendar planner and phones on Today.
+  _View? _chosen;
+
+  bool get _isDemo => widget.store != null;
 
   @override
   void dispose() {
-    _calendar.dispose();
+    if (widget.store == null) _store.dispose();
+    if (widget.calendar == null) _calendar.dispose();
     super.dispose();
   }
 
@@ -65,39 +94,44 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       task: task,
       isNew: isNew,
-      projects: projectNames(_latestOpen),
+      projects: _store.projectNameSuggestions,
     );
     switch (result) {
       case SaveTask(:final task):
-        _run(_repo.save(task));
+        _run(_store.saveTask(task));
       case DeleteTask():
-        _run(_repo.delete(task));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Deleted "${task.title}"'),
-              action: SnackBarAction(
-                label: 'Undo',
-                onPressed: () => _run(_repo.save(task)),
-              ),
+        final deleted = await _store.deleteTask(task);
+        if (!mounted) return;
+        final n = deleted.sessions.length;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Deleted "${task.title}"'
+              '${n == 0 ? '' : ' and its $n ${n == 1 ? 'session' : 'sessions'}'}',
             ),
-          );
-        }
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () => _run(_store.restoreTask(deleted)),
+            ),
+          ),
+        );
       case null:
         break;
     }
   }
 
-  void _addTask() {
+  void _addTask(_View view) {
     final now = DateTime.now();
     // New tasks default to today when added from the Today tab.
-    final task = Task(
-      id: _repo.newId(),
-      title: '',
-      due: _view == _View.today ? dateOnly(now) : null,
-      createdAt: now,
+    _edit(
+      Task(
+        id: _store.newTaskId(),
+        title: '',
+        due: view == _View.today ? dateOnly(now) : null,
+        createdAt: now,
+      ),
+      isNew: true,
     );
-    _edit(task, isNew: true);
   }
 
   /// Shows event details; "Add a task" prefills the event's name as the
@@ -108,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (addTask != true || !mounted) return;
     await _edit(
       Task(
-        id: _repo.newId(),
+        id: _store.newTaskId(),
         title: '',
         project: event.title,
         due: dateOnly(event.start),
@@ -124,61 +158,86 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  void _toggle(Task task, bool done) => _run(_repo.setDone(task, done));
+  void _toggle(Task task, bool done) => _run(_store.setDone(task, done));
+
+  Widget _menu() => PopupMenuButton<String>(
+    onSelected: (v) =>
+        v == 'calendars' ? _openCalendars() : FirebaseAuth.instance.signOut(),
+    itemBuilder: (_) => [
+      const PopupMenuItem(value: 'calendars', child: Text('Calendars…')),
+      if (!_isDemo)
+        PopupMenuItem(
+          value: 'signout',
+          child: Text(
+            'Sign out ${FirebaseAuth.instance.currentUser?.email ?? ''}',
+          ),
+        ),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 700;
-    final body = _view == _View.done
-        ? _buildDone()
-        : ListenableBuilder(
-            listenable: _calendar,
-            builder: (context, _) => _buildOpen(),
-          );
+    final wide = MediaQuery.sizeOf(context).width >= _wideLayout;
+    final views = [
+      for (final v in _View.values)
+        if (wide || v != _View.calendar) v,
+    ];
+    var view = _chosen ?? (wide ? _View.calendar : _View.today);
+    if (!views.contains(view)) view = _View.today;
+    void select(int i) => setState(() => _chosen = views[i]);
+
+    final body = ListenableBuilder(
+      listenable: Listenable.merge([_store, _calendar]),
+      builder: (context, _) {
+        if (_store.error != null && !_store.loaded) {
+          return _message('Could not load tasks:\n${_store.error}');
+        }
+        if (!_store.loaded) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return switch (view) {
+          _View.calendar => CalendarPage(
+            store: _store,
+            feeds: _calendar,
+            editTask: _edit,
+            onManageFeeds: _openCalendars,
+            menu: _menu(),
+            now: widget.now,
+          ),
+          _View.done => _buildDone(),
+          _ => _buildOpen(view),
+        };
+      },
+    );
 
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): _addTask,
-        const SingleActivator(LogicalKeyboardKey.keyN, control: true): _addTask,
+        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () =>
+            _addTask(view),
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
+            _addTask(view),
       },
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          appBar: AppBar(
-            title: Text(_view.label),
-            actions: [
-              PopupMenuButton<String>(
-                onSelected: (v) => v == 'calendars'
-                    ? _openCalendars()
-                    : FirebaseAuth.instance.signOut(),
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'calendars',
-                    child: Text('Calendars…'),
-                  ),
-                  PopupMenuItem(
-                    value: 'signout',
-                    child: Text(
-                      'Sign out ${FirebaseAuth.instance.currentUser?.email ?? ''}',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: _addTask,
-            tooltip: 'New task (⌘N)',
-            child: const Icon(Icons.add),
-          ),
+          // The planner has its own toolbar.
+          appBar: view == _View.calendar
+              ? null
+              : AppBar(title: Text(view.label), actions: [_menu()]),
+          floatingActionButton: view == _View.calendar
+              ? null
+              : FloatingActionButton(
+                  onPressed: () => _addTask(view),
+                  tooltip: 'New task (⌘N)',
+                  child: const Icon(Icons.add),
+                ),
           bottomNavigationBar: wide
               ? null
               : NavigationBar(
-                  selectedIndex: _view.index,
-                  onDestinationSelected: (i) =>
-                      setState(() => _view = _View.values[i]),
+                  selectedIndex: views.indexOf(view),
+                  onDestinationSelected: select,
                   destinations: [
-                    for (final v in _View.values)
+                    for (final v in views)
                       NavigationDestination(
                         icon: Icon(v.icon),
                         selectedIcon: Icon(v.selectedIcon),
@@ -190,12 +249,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ? Row(
                   children: [
                     NavigationRail(
-                      selectedIndex: _view.index,
+                      selectedIndex: views.indexOf(view),
                       labelType: NavigationRailLabelType.all,
-                      onDestinationSelected: (i) =>
-                          setState(() => _view = _View.values[i]),
+                      onDestinationSelected: select,
                       destinations: [
-                        for (final v in _View.values)
+                        for (final v in views)
                           NavigationRailDestination(
                             icon: Icon(v.icon),
                             selectedIcon: Icon(v.selectedIcon),
@@ -213,108 +271,81 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildOpen() {
-    return StreamBuilder<List<Task>>(
-      stream: _open,
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return _message('Could not load tasks:\n${snap.error}');
-        }
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        _latestOpen = snap.data!;
-        final now = DateTime.now();
-        final today = dateOnly(now);
-        final events = _calendar.eventsBetween(
-          today,
-          DateTime(today.year, today.month, today.day + 8),
-        );
-        final sections = switch (_view) {
-          _View.today => todaySections(_latestOpen, now, events: events),
-          _View.upcoming => upcomingSections(
-            _latestOpen,
-            now,
-            events: events,
-            dayLabel: (d) => daysBetween(now, d) == 1
-                ? 'Tomorrow · ${DateFormat.MMMd().format(d)}'
-                : DateFormat('EEEE · MMM d').format(d),
-          ),
-          _View.projects => projectSections(_latestOpen),
-          _View.done => const <TaskSection>[],
-        };
-        if (sections.every((s) => s.isEmpty) && _view != _View.upcoming) {
-          return _message(
-            _view == _View.today
-                ? 'Nothing due today 🎉'
-                : 'No open tasks. Press + to add one.',
-          );
-        }
-        final list = ListView(
-          padding: const EdgeInsets.only(bottom: 88),
-          children: [
-            for (final (i, s) in sections.indexed) ...[
-              _header(s.title, s.tasks.length),
-              for (final entry in agenda(s))
-                switch (entry) {
-                  TaskEntry(:final task) => TaskTile(
-                    key: ValueKey(task.id),
-                    task: task,
-                    showProject: _view != _View.projects,
-                    onToggle: (v) => _toggle(task, v),
-                    onTap: () => _edit(task),
-                  ),
-                  EventEntry(:final event) => EventTile(
-                    key: ValueKey('${s.title}/${event.id}'),
-                    event: event,
-                    feed: _calendar.feed(event.feedId),
-                    day: _sectionDay(today, i),
-                    onTap: () => _openEvent(event),
-                  ),
-                },
-            ],
-          ],
-        );
-        return _view == _View.projects
-            ? list
-            : RefreshIndicator(onRefresh: _calendar.refresh, child: list);
-      },
+  Widget _buildOpen(_View view) {
+    final open = _store.openTasks;
+    final now = DateTime.now();
+    final today = dateOnly(now);
+    final events = _calendar.eventsBetween(
+      today,
+      DateTime(today.year, today.month, today.day + 8),
     );
+    final sections = switch (view) {
+      _View.today => todaySections(open, now, events: events),
+      _View.upcoming => upcomingSections(
+        open,
+        now,
+        events: events,
+        dayLabel: (d) => daysBetween(now, d) == 1
+            ? 'Tomorrow · ${DateFormat.MMMd().format(d)}'
+            : DateFormat('EEEE · MMM d').format(d),
+      ),
+      _ => projectSections(open),
+    };
+    if (sections.every((s) => s.isEmpty) && view != _View.upcoming) {
+      return _message(
+        view == _View.today
+            ? 'Nothing due today 🎉'
+            : 'No open tasks. Press + to add one.',
+      );
+    }
+    final list = ListView(
+      padding: const EdgeInsets.only(bottom: 88),
+      children: [
+        for (final (i, s) in sections.indexed) ...[
+          _header(s.title, s.tasks.length),
+          for (final entry in agenda(s))
+            switch (entry) {
+              TaskEntry(:final task) => TaskTile(
+                key: ValueKey(task.id),
+                task: task,
+                showProject: view != _View.projects,
+                onToggle: (v) => _toggle(task, v),
+                onTap: () => _edit(task),
+              ),
+              EventEntry(:final event) => EventTile(
+                key: ValueKey('${s.title}/${event.id}'),
+                event: event,
+                feed: _calendar.feed(event.feedId),
+                day: view == _View.today
+                    ? today
+                    : DateTime(today.year, today.month, today.day + 1 + i),
+                onTap: () => _openEvent(event),
+              ),
+            },
+        ],
+      ],
+    );
+    return view == _View.projects
+        ? list
+        : RefreshIndicator(onRefresh: _calendar.refresh, child: list);
   }
 
   Widget _buildDone() {
-    return StreamBuilder<List<Task>>(
-      stream: _completed,
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return _message('Could not load tasks:\n${snap.error}');
-        }
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final tasks = snap.data!;
-        if (tasks.isEmpty) return _message('No completed tasks yet.');
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 88),
-          children: [
-            for (final t in tasks)
-              TaskTile(
-                key: ValueKey(t.id),
-                task: t,
-                onToggle: (v) => _toggle(t, v),
-                onTap: () => _edit(t),
-              ),
-          ],
-        );
-      },
+    final tasks = _store.completedTasks;
+    if (tasks.isEmpty) return _message('No completed tasks yet.');
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 88),
+      children: [
+        for (final t in tasks)
+          TaskTile(
+            key: ValueKey(t.id),
+            task: t,
+            onToggle: (v) => _toggle(t, v),
+            onTap: () => _edit(t),
+          ),
+      ],
     );
   }
-
-  /// The calendar day a Today/Upcoming section shows. Today's sections end
-  /// with "Today"; Upcoming's day sections start tomorrow.
-  DateTime _sectionDay(DateTime today, int index) => _view == _View.today
-      ? today
-      : DateTime(today.year, today.month, today.day + 1 + index);
 
   Widget _header(String title, int count) {
     final theme = Theme.of(context);

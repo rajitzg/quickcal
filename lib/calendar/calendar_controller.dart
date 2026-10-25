@@ -21,10 +21,13 @@ class CalendarController extends ChangeNotifier {
     String uid, {
     http.Client? client,
     this.refreshEvery = const Duration(minutes: 30),
-  }) : _repo = CalendarFeedRepository(uid),
+  }) : _uid = uid,
        _client = client ?? http.Client();
 
-  final CalendarFeedRepository _repo;
+  final String _uid;
+  // Created on first use so demo mode never touches Firebase.
+  late final CalendarFeedRepository _repo = CalendarFeedRepository(_uid);
+  bool _demo = false;
   final http.Client _client;
   final Duration refreshEvery;
 
@@ -75,11 +78,31 @@ class CalendarController extends ChangeNotifier {
     _timer = Timer.periodic(refreshEvery, (_) => refresh());
   }
 
-  Future<void> saveFeeds(List<CalendarFeed> feeds) => _repo.save(feeds);
-  String newFeedId() => _repo.newId();
+  Future<void> saveFeeds(List<CalendarFeed> feeds) async {
+    if (!_demo) return _repo.save(feeds);
+    _feeds = feeds;
+    _changed();
+  }
+
+  String newFeedId() => _demo ? 'demo-${_feeds.length}' : _repo.newId();
+
+  /// Shows fixed feeds without Firebase or network (browser demo, tests).
+  void showDemo(Map<CalendarFeed, String> icsByFeed) {
+    _demo = true;
+    _feeds = icsByFeed.keys.toList();
+    for (final MapEntry(key: feed, value: ics) in icsByFeed.entries) {
+      _parsed[feed.id] = parseIcs(ics);
+    }
+    if (!_tzReady) {
+      tzdata.initializeTimeZones();
+      _tzReady = true;
+    }
+    _changed();
+  }
 
   /// Downloads every enabled feed (or just [only]).
   Future<void> refresh({List<CalendarFeed>? only}) async {
+    if (_demo) return;
     final targets = (only ?? _feeds).where((f) => f.enabled).toList();
     if (targets.isEmpty) return;
     _refreshing = true;

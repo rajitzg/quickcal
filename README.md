@@ -1,7 +1,10 @@
 # Taskflow
 
-A minimal, fast task list for macOS and Android, synced through Firebase Firestore.
+A minimal, fast task list and planner for macOS and Android, synced through Firebase Firestore.
 
+![Calendar planner](docs/planner.png)
+
+- **Calendar** (Mac / wide windows): see "Calendar planner" below
 - **Today**: overdue tasks and tasks due today
 - **Upcoming**: the next 7 days by day, then Later and No date
 - **Projects**: open tasks grouped by project (no project = Inbox)
@@ -48,6 +51,44 @@ Create an account on one device, then sign in with the same email on the other.
 - **Mac:** `flutter build macos --release`, then copy `build/macos/Build/Products/Release/taskflow.app` to `/Applications`.
 - **Android:** `flutter build apk --release`, then install `build/app/outputs/flutter-apk/app-release.apk` on the phone. Or run `flutter install` with the phone connected.
 
+## Calendar planner (desktop)
+On the Mac (any window at least 700px wide), the app opens on the **Calendar** view, styled after Notion Calendar.
+
+**Layout:** open tasks are on the left, grouped by project, with a week grid on the right.
+
+**Scheduling:**
+- Drag a task onto the grid to schedule a one-hour **work session**.
+- Drag the same task again to add more sessions. A task can be spread over as many sessions as you like. Each block shows "2/3", and the task card shows the count, total time and next session.
+- Drag a block to move it, including to another day.
+- Drag its top or bottom edge to change its length. Everything snaps to 15 minutes.
+- Drag on empty space to draw a new block, then type a new task or pick an existing one.
+- Dragging near the top or bottom edge scrolls the grid.
+
+**Other interactions:**
+- Click a block to select it. Double-click to edit the task. Right-click for a menu: mark done, add another session the next day, delete.
+- Task deadlines show in the all-day row.
+
+**Calendars:**
+- Each project has its own calendar with a color and a show/hide checkbox, listed in **Calendars** at the bottom left.
+- **+** creates a project calendar before it has any tasks. **⋯** renames or recolors one; renaming updates its tasks and sessions too.
+- Subscribed iCal feeds are listed there as well.
+
+**Keyboard:**
+
+| Key | Action |
+|---|---|
+| ← / → | Previous / next week |
+| T | Today |
+| D / 3 / X / W | Day / 3 days / work week / week |
+| Delete or Backspace | Remove the selected session (with undo) |
+| Esc | Deselect |
+| ⌘N | New task |
+
+**Trackpad:** two-finger scrolling scrolls the day, and a two-finger swipe sideways changes the week.
+
+### Try it without Firebase
+`flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.
+
 ## Adding calendars
 Menu (⋮) → **Calendars…** → **Add calendar**, then paste the calendar's iCal link. The screen explains where to find the link for Google, iCloud, Outlook and school portals. Calendar subscriptions sync through Firestore, so you add each one once and it appears on both devices.
 
@@ -64,6 +105,10 @@ Known limits:
 - Google can take a few minutes to publish edits to its iCal feeds.
 
 ## Data model
+Work sessions are documents at `users/{uid}/sessions/{id}`: `taskId`, `start`, `end`, plus copies of the task's `title` and `project`. These copies let the calendar draw sessions of completed tasks, and they're updated when the task is renamed. Deleting a task deletes its sessions.
+
+Project calendar colors and visibility are stored in `users/{uid}/settings/projects`.
+
 Calendar subscriptions are stored in `users/{uid}/settings/calendars`, as a `feeds` list of `{id, name, url, color, enabled}`.
 
 Each task is a document at `users/{uid}/tasks/{taskId}` with these fields: `title`, `notes`, `project`, `due` (timestamp), `hasTime`, `done`, `completedAt` (present only while done), `createdAt`, `updatedAt`.
@@ -80,7 +125,15 @@ lib/
   calendar/calendar_event.dart  Recurrence expansion → occurrences (unit-tested)
   calendar/calendar_feeds.dart  Feed model + Firestore storage
   calendar/calendar_controller.dart  Download, cache and refresh feeds
+  data/planner_store.dart    App state: tasks, sessions, project calendars
+  data/firestore_planner_store.dart  …backed by Firestore (one listener each)
+  data/memory_planner_store.dart     …in memory (tests, demo)
+  logic/calendar_layout.dart Overlap columns, snapping, session summaries (unit-tested)
   logic/task_views.dart      Pure grouping/sorting for each tab (unit-tested)
+  widgets/week_calendar.dart Time grid with drag/resize/create/drop (widget-tested)
+  widgets/task_panel.dart    Planner sidebar: draggable tasks + calendar list
+  screens/calendar_page.dart The planner screen
+  demo_main.dart             Sample-data entry point
   screens/                   Sign-in and home (nav rail on Mac, bottom bar on phone)
   widgets/                   Task row and the add/edit sheet
 test/

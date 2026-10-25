@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/sign_in_screen.dart';
+import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,16 +18,11 @@ class TaskflowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Colors.indigo;
     return MaterialApp(
       title: 'Taskflow',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: seed, useMaterial3: true),
-      darkTheme: ThemeData(
-        colorSchemeSeed: seed,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      theme: lightTheme,
+      darkTheme: darkTheme,
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snap) {

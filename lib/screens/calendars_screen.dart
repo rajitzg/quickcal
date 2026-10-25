@@ -3,17 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_feeds.dart';
-
-const _palette = [
-  0xFF3F51B5, // indigo
-  0xFF0B8043, // green
-  0xFFD50000, // red
-  0xFFF4511E, // orange
-  0xFFF6BF26, // yellow
-  0xFF039BE5, // blue
-  0xFF8E24AA, // purple
-  0xFF616161, // gray
-];
+import '../theme/palette.dart';
 
 /// Add, recolor, disable and remove iCal subscriptions.
 class CalendarsScreen extends StatelessWidget {
@@ -31,7 +21,7 @@ class CalendarsScreen extends StatelessWidget {
               id: controller.newFeedId(),
               name: '',
               url: '',
-              color: _palette[feeds.length % _palette.length],
+              color: calendarPalette[feeds.length % calendarPalette.length],
             ),
       ),
     );
@@ -234,7 +224,7 @@ class _FeedDialogState extends State<_FeedDialog> {
             Wrap(
               spacing: 8,
               children: [
-                for (final c in _palette)
+                for (final c in calendarPalette)
                   InkWell(
                     customBorder: const CircleBorder(),
                     onTap: () => setState(() => _color = c),
