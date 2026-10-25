@@ -92,7 +92,9 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 | Esc | Deselect |
 | ⌘N | New task |
 
-**Trackpad:** two-finger scrolling scrolls the day, and a two-finger swipe sideways changes the week.
+**Scrolling:** two-finger scrolling moves up and down through the day.
+
+**Changing weeks:** swipe sideways with two fingers, or use a horizontal scroll wheel or Shift+wheel. The whole calendar follows your fingers, with the previous or next week sliding in, and snaps to the nearest week when you let go. A quick flick is enough. The ‹ › buttons and the arrow keys slide the same way.
 
 ### Try it without Firebase
 `flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.

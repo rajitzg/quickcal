@@ -61,6 +61,7 @@ class _CalendarPageState extends State<CalendarPage> {
   late DateTime _focusDay = dateOnly(_now);
   _Span _span = _Span.week;
   String? _selectedId;
+  final _calendarKey = GlobalKey<WeekCalendarState>();
   final _panelKey = GlobalKey();
 
   /// A block being dragged out of the calendar, and whether it's over the
@@ -73,7 +74,7 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
-    store.ensureSessionsFrom(_days.first);
+    store.ensureSessionsFrom(_daysAround(-1).first);
   }
 
   @override
@@ -82,8 +83,14 @@ class _CalendarPageState extends State<CalendarPage> {
     super.dispose();
   }
 
-  List<DateTime> get _days {
-    final f = _focusDay;
+  List<DateTime> get _days => _daysAround(0);
+
+  int get _step => _span == _Span.workWeek ? 7 : _span.days;
+
+  /// The days of the page [offset] pages away from the current one.
+  List<DateTime> _daysAround(int offset) {
+    final f0 = _focusDay;
+    final f = DateTime(f0.year, f0.month, f0.day + offset * _step);
     final start = switch (_span) {
       // Weeks start on Sunday; the work week on Monday.
       _Span.week => DateTime(f.year, f.month, f.day - f.weekday % 7),
@@ -96,21 +103,31 @@ class _CalendarPageState extends State<CalendarPage> {
     ];
   }
 
+  /// Switches pages immediately (after a swipe has finished animating).
   void _go(int direction) {
-    final step = _span == _Span.workWeek ? 7 : _span.days;
     setState(() {
       _focusDay = DateTime(
         _focusDay.year,
         _focusDay.month,
-        _focusDay.day + direction * step,
+        _focusDay.day + direction * _step,
       );
     });
-    store.ensureSessionsFrom(_days.first);
+    store.ensureSessionsFrom(_daysAround(-1).first);
+  }
+
+  /// Slides to the previous/next page (toolbar arrows, keyboard).
+  void _page(int direction) {
+    final calendar = _calendarKey.currentState;
+    if (calendar != null) {
+      calendar.page(direction);
+    } else {
+      _go(direction);
+    }
   }
 
   void _today() {
     setState(() => _focusDay = dateOnly(_now));
-    store.ensureSessionsFrom(_days.first);
+    store.ensureSessionsFrom(_daysAround(-1).first);
   }
 
   void _run(Future<void> write) {
@@ -132,9 +149,10 @@ class _CalendarPageState extends State<CalendarPage> {
 
   CalendarEvent? _event(String itemId) {
     if (!itemId.startsWith('e:')) return null;
-    final days = _days;
+    // Same range as _items, so the feed controller's cache is reused.
+    final first = _daysAround(-1).first, last = _daysAround(1).last;
     return widget.feeds
-        ?.eventsBetween(days.first, _dayAfter(days.last))
+        ?.eventsBetween(first, _dayAfter(last))
         .where((e) => 'e:${e.id}' == itemId)
         .firstOrNull;
   }
@@ -358,11 +376,15 @@ class _CalendarPageState extends State<CalendarPage> {
       listenable: Listenable.merge([store, ?widget.feeds]),
       builder: (context, _) {
         final days = _days;
-        final items = _items(days);
+        final prev = _daysAround(-1), next = _daysAround(1);
+        // Include the neighbouring pages, which show while swiping.
+        final items = _items([...prev, ...days, ...next]);
         return CallbackShortcuts(
           bindings: {
-            const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _go(-1),
-            const SingleActivator(LogicalKeyboardKey.arrowRight): () => _go(1),
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                _page(-1),
+            const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+                _page(1),
             const SingleActivator(LogicalKeyboardKey.keyT): _today,
             for (final s in _Span.values)
               SingleActivator(
@@ -413,7 +435,10 @@ class _CalendarPageState extends State<CalendarPage> {
                         _toolbar(context, days),
                         Expanded(
                           child: WeekCalendar(
+                            key: _calendarKey,
                             days: days,
+                            prevDays: prev,
+                            nextDays: next,
                             now: widget.now,
                             items: items.timed,
                             allDayItems: items.allDay,
@@ -485,12 +510,12 @@ class _CalendarPageState extends State<CalendarPage> {
           IconButton(
             tooltip: 'Previous (←)',
             icon: const Icon(Icons.chevron_left),
-            onPressed: () => _go(-1),
+            onPressed: () => _page(-1),
           ),
           IconButton(
             tooltip: 'Next (→)',
             icon: const Icon(Icons.chevron_right),
-            onPressed: () => _go(1),
+            onPressed: () => _page(1),
           ),
           const SizedBox(width: 4),
           PopupMenuButton<_Span>(

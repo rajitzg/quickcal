@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
 
 import '../logic/calendar_layout.dart';
@@ -45,11 +46,16 @@ class _DragOp {
 /// - Drop a [Task] from a `Draggable<Task>` to schedule it ([onDropTask]).
 /// - Drag a block out past the left edge (onto the task list) to remove
 ///   it: [onDragOutside] reports where it is, [onDropOutside] the drop.
-/// - Trackpad: two-finger swipe sideways calls [onSwipe].
+/// - Swipe sideways (trackpad, or a horizontal scroll wheel) to page to the
+///   previous/next range: the grid follows the fingers and snaps to a page,
+///   then [onSwipe] reports the direction. Needs [prevDays] and [nextDays]
+///   (pages of the same length as [days]) so the neighbours can be drawn.
 class WeekCalendar extends StatefulWidget {
   const WeekCalendar({
     super.key,
     required this.days,
+    this.prevDays = const [],
+    this.nextDays = const [],
     required this.items,
     required this.allDayItems,
     required this.onChanged,
@@ -68,7 +74,14 @@ class WeekCalendar extends StatefulWidget {
     this.now,
   });
 
+  /// The visible days.
   final List<DateTime> days;
+
+  /// The pages before and after [days], shown while swiping.
+  final List<DateTime> prevDays;
+  final List<DateTime> nextDays;
+
+  /// Items for [prevDays], [days] and [nextDays].
   final List<CalItem> items;
   final List<CalItem> allDayItems;
   final String? selectedId;
@@ -107,7 +120,8 @@ class WeekCalendar extends StatefulWidget {
   State<WeekCalendar> createState() => WeekCalendarState();
 }
 
-class WeekCalendarState extends State<WeekCalendar> {
+class WeekCalendarState extends State<WeekCalendar>
+    with SingleTickerProviderStateMixin {
   static const gutterWidth = 56.0;
 
   final _scroll = ScrollController();
@@ -123,7 +137,34 @@ class WeekCalendarState extends State<WeekCalendar> {
   /// the item doesn't flicker back to its old spot.
   final _pending = <String, (DateTime, DateTime)>{};
 
-  Offset _swipe = Offset.zero;
+  // ---- Horizontal paging ----
+  /// Horizontal shift of the day columns in pixels: positive reveals the
+  /// previous page, negative the next.
+  double _shift = 0;
+  late final AnimationController _pageAnim = AnimationController.unbounded(
+    vsync: this,
+  )..addListener(() => setState(() => _shift = _pageAnim.value));
+
+  /// Width of the visible day columns (one page).
+  double _pageWidth = 1;
+
+  /// Trackpad gesture in progress: shift at its start, and the axis it
+  /// locked to (null until it has moved far enough to tell).
+  ({double base, Axis? axis, double lockDx})? _pan;
+  VelocityTracker? _velocity;
+  Timer? _wheelSettle;
+
+  bool get _paging =>
+      widget.prevDays.length == widget.days.length &&
+      widget.nextDays.length == widget.days.length;
+
+  /// Previous, visible and next days, in order.
+  List<DateTime> get _all => _paging
+      ? [...widget.prevDays, ...widget.days, ...widget.nextDays]
+      : widget.days;
+
+  /// Index of the first visible day in [_all].
+  int get _first => _paging ? widget.prevDays.length : 0;
 
   DateTime get _now => widget.now ?? DateTime.now();
 
@@ -161,6 +202,8 @@ class WeekCalendarState extends State<WeekCalendar> {
 
   @override
   void dispose() {
+    _pageAnim.dispose();
+    _wheelSettle?.cancel();
     _scroll.dispose();
     _autoScroll?.cancel();
     _clock?.cancel();
@@ -174,8 +217,12 @@ class WeekCalendarState extends State<WeekCalendar> {
     final box = _gridKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return null;
     final local = box.globalToLocal(global);
-    final dayWidth = box.size.width / widget.days.length;
-    final day = (local.dx / dayWidth).floor().clamp(0, widget.days.length - 1);
+    final dayWidth = box.size.width / _all.length;
+    // Only visible days: the neighbouring pages are off-screen.
+    final day = (local.dx / dayWidth).floor().clamp(
+      _first,
+      _first + widget.days.length - 1,
+    );
     return (day, local.dy / widget.hourHeight * 60);
   }
 
@@ -207,7 +254,7 @@ class WeekCalendarState extends State<WeekCalendar> {
     final slot = _slotAt(global);
     if (slot == null) return;
     final (dayIndex, minutes) = slot;
-    final days = widget.days;
+    final days = _all;
 
     if (op.mode == _Mode.move && widget.onDropOutside != null) {
       final box = context.findRenderObject() as RenderBox?;
@@ -368,22 +415,135 @@ class WeekCalendarState extends State<WeekCalendar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      children: [
-        _DayHeader(days: widget.days, now: _now, gutter: gutterWidth),
-        _AllDayRow(
-          days: widget.days,
-          items: widget.allDayItems,
-          gutter: gutterWidth,
-          selectedId: widget.selectedId,
-          onSelect: widget.onSelect,
-          onOpen: widget.onOpen,
-          onContextMenu: widget.onContextMenu,
-        ),
-        Divider(height: 1, color: theme.dividerColor),
-        Expanded(child: _buildGrid(theme)),
-      ],
+    return Listener(
+      onPointerPanZoomStart: _panStart,
+      onPointerPanZoomUpdate: _panUpdate,
+      onPointerPanZoomEnd: _panEnd,
+      onPointerSignal: _wheel,
+      child: Column(
+        children: [
+          _DayHeader(days: _all, now: _now, gutter: gutterWidth, pager: _pager),
+          _AllDayRow(
+            days: _all,
+            pager: _pager,
+            items: widget.allDayItems,
+            gutter: gutterWidth,
+            selectedId: widget.selectedId,
+            onSelect: widget.onSelect,
+            onOpen: widget.onOpen,
+            onContextMenu: widget.onContextMenu,
+          ),
+          Divider(height: 1, color: theme.dividerColor),
+          Expanded(child: _buildGrid(theme)),
+        ],
+      ),
     );
+  }
+
+  /// Shows the visible page of a row of [_all] day columns, shifted by the
+  /// current swipe.
+  Widget _pager(Widget child) => _paging
+      ? _Pager(
+          widthFactor: _all.length / widget.days.length,
+          leading: _first / widget.days.length,
+          shift: _shift,
+          child: child,
+        )
+      : child;
+
+  // ---- Paging gestures --------------------------------------------------
+
+  void _panStart(PointerPanZoomStartEvent e) {
+    if (!_paging || _op != null) return;
+    _pageAnim.stop();
+    _pan = (base: _shift, axis: null, lockDx: 0);
+    _velocity = VelocityTracker.withKind(e.kind);
+  }
+
+  void _panUpdate(PointerPanZoomUpdateEvent e) {
+    final pan = _pan;
+    if (pan == null) return;
+    _velocity?.addPosition(e.timeStamp, e.pan);
+    if (pan.axis == null) {
+      if (e.pan.distance < 8) return;
+      // Lock to the dominant direction so vertical scrolling never drifts
+      // sideways and vice versa.
+      _pan = (
+        base: pan.base,
+        axis: e.pan.dx.abs() > e.pan.dy.abs() ? Axis.horizontal : Axis.vertical,
+        lockDx: e.pan.dx,
+      );
+    }
+    final p = _pan!;
+    if (p.axis == Axis.horizontal) {
+      setState(() => _shift = _clampShift(p.base + e.pan.dx - p.lockDx));
+    }
+  }
+
+  void _panEnd(PointerPanZoomEndEvent e) {
+    final pan = _pan;
+    _pan = null;
+    if (pan?.axis != Axis.horizontal) return;
+    _settle(_velocity?.getVelocity().pixelsPerSecond.dx ?? 0);
+  }
+
+  /// Horizontal mouse wheels, Shift+wheel, and trackpads in browsers.
+  void _wheel(PointerSignalEvent e) {
+    if (!_paging || e is! PointerScrollEvent || _op != null) return;
+    final d = e.scrollDelta;
+    if (d.dx.abs() <= d.dy.abs()) return;
+    _pageAnim.stop();
+    setState(() => _shift = _clampShift(_shift - d.dx));
+    _wheelSettle?.cancel();
+    _wheelSettle = Timer(const Duration(milliseconds: 140), () => _settle(0));
+  }
+
+  double _clampShift(double v) => v.clamp(-_pageWidth, _pageWidth).toDouble();
+
+  /// Snaps to the nearest page (or the one flung towards).
+  void _settle(double velocity) {
+    final w = _pageWidth;
+    var dir = 0;
+    if (_shift > w * 0.2 || velocity > 600) dir = -1;
+    if (_shift < -w * 0.2 || velocity < -600) dir = 1;
+    // Only page in the direction the grid has actually been pulled.
+    if (dir != 0 && _shift != 0 && (_shift > 0) != (dir < 0)) dir = 0;
+    _animateTo(dir);
+  }
+
+  /// Animates to the previous (-1) or next (+1) page, or back to the
+  /// current one (0), then reports the change through [WeekCalendar.onSwipe].
+  void _animateTo(int dir) {
+    final target = -dir * _pageWidth;
+    _pageAnim.value = _shift;
+    _pageAnim
+        .animateTo(
+          target,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        )
+        .whenCompleteOrCancel(() {
+          if (!mounted || dir == 0 || _shift != target) return;
+          // The parent shows the new page in the same frame as the shift
+          // resets, so the swap is invisible.
+          setState(() => _shift = 0);
+          widget.onSwipe?.call(dir);
+        });
+  }
+
+  /// Goes to the previous (-1) or next (+1) page with a slide animation,
+  /// as if swiped (toolbar arrows, keyboard).
+  void page(int dir) {
+    if (!_paging) {
+      widget.onSwipe?.call(dir);
+      return;
+    }
+    // A second press while sliding finishes the first page immediately.
+    if (_pageAnim.isAnimating) {
+      _pageAnim.stop();
+      return page(dir);
+    }
+    _animateTo(dir);
   }
 
   Widget _buildGrid(ThemeData theme) {
@@ -408,35 +568,32 @@ class WeekCalendarState extends State<WeekCalendar> {
         _update(details.offset);
         _end();
       },
-      builder: (context, candidates, rejected) => Listener(
-        onPointerPanZoomStart: (_) => _swipe = Offset.zero,
-        onPointerPanZoomUpdate: (e) => _swipe = e.pan,
-        onPointerPanZoomEnd: (_) {
-          final s = _swipe;
-          if (s.dx.abs() > 80 && s.dx.abs() > s.dy.abs() * 1.5) {
-            widget.onSwipe?.call(s.dx < 0 ? 1 : -1);
-          }
-        },
-        child: SingleChildScrollView(
-          key: _viewportKey,
-          controller: _scroll,
-          child: SizedBox(
-            height: height,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: gutterWidth,
-                  child: _HourLabels(hourHeight: widget.hourHeight),
+      builder: (context, candidates, rejected) => SingleChildScrollView(
+        key: _viewportKey,
+        controller: _scroll,
+        child: SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: gutterWidth,
+                child: _HourLabels(hourHeight: widget.hourHeight),
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    _pageWidth = constraints.maxWidth;
+                    return _pager(
+                      LayoutBuilder(
+                        builder: (context, c) =>
+                            _buildDays(theme, c.maxWidth, height),
+                      ),
+                    );
+                  },
                 ),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) =>
-                        _buildDays(theme, constraints.maxWidth, height),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -444,7 +601,7 @@ class WeekCalendarState extends State<WeekCalendar> {
   }
 
   Widget _buildDays(ThemeData theme, double width, double height) {
-    final days = widget.days;
+    final days = _all;
     final dayWidth = width / days.length;
     final op = _op;
     final now = _now;
@@ -803,10 +960,12 @@ class _DayHeader extends StatelessWidget {
     required this.days,
     required this.now,
     required this.gutter,
+    required this.pager,
   });
   final List<DateTime> days;
   final DateTime now;
   final double gutter;
+  final Widget Function(Widget) pager;
 
   @override
   Widget build(BuildContext context) {
@@ -816,45 +975,57 @@ class _DayHeader extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(width: gutter),
-          for (final d in days)
-            Expanded(
-              child: Center(
-                child: () {
-                  final isToday = dateOnly(d) == dateOnly(now);
-                  final style = theme.textTheme.titleSmall!.copyWith(
-                    color: isToday
-                        ? null
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                    fontWeight: isToday ? FontWeight.w600 : FontWeight.w400,
-                  );
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(DateFormat.E().format(d), style: style),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: isToday
-                            ? BoxDecoration(
-                                color: const Color(0xFFE5484D),
-                                borderRadius: BorderRadius.circular(6),
-                              )
-                            : null,
-                        child: Text(
-                          '${d.day}',
-                          style: style.copyWith(
-                            color: isToday ? Colors.white : null,
-                          ),
-                        ),
+          Expanded(
+            child: pager(
+              Row(
+                children: [
+                  for (final d in days)
+                    Expanded(
+                      child: Center(
+                        child: () {
+                          final isToday = dateOnly(d) == dateOnly(now);
+                          final style = theme.textTheme.titleSmall!.copyWith(
+                            color: isToday
+                                ? null
+                                : theme.colorScheme.onSurface.withValues(
+                                    alpha: 0.6,
+                                  ),
+                            fontWeight: isToday
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          );
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(DateFormat.E().format(d), style: style),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: isToday
+                                    ? BoxDecoration(
+                                        color: const Color(0xFFE5484D),
+                                        borderRadius: BorderRadius.circular(6),
+                                      )
+                                    : null,
+                                child: Text(
+                                  '${d.day}',
+                                  style: style.copyWith(
+                                    color: isToday ? Colors.white : null,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        }(),
                       ),
-                    ],
-                  );
-                }(),
+                    ),
+                ],
               ),
             ),
+          ),
         ],
       ),
     );
@@ -864,6 +1035,7 @@ class _DayHeader extends StatelessWidget {
 class _AllDayRow extends StatelessWidget {
   const _AllDayRow({
     required this.days,
+    required this.pager,
     required this.items,
     required this.gutter,
     this.selectedId,
@@ -873,6 +1045,7 @@ class _AllDayRow extends StatelessWidget {
   });
 
   final List<DateTime> days;
+  final Widget Function(Widget) pager;
   final List<CalItem> items;
   final double gutter;
   final String? selectedId;
@@ -912,21 +1085,30 @@ class _AllDayRow extends StatelessWidget {
               ),
             ),
           ),
-          for (final list in perDay)
-            Expanded(
-              child: Column(
+          Expanded(
+            child: pager(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final i in list)
-                    _AllDayChip(
-                      item: i,
-                      selected: selectedId == i.id,
-                      onTap: () => onSelect?.call(i),
-                      onOpen: () => onOpen?.call(i),
-                      onContextMenu: (p) => onContextMenu?.call(i, p),
+                  for (final list in perDay)
+                    Expanded(
+                      child: Column(
+                        children: [
+                          for (final i in list)
+                            _AllDayChip(
+                              item: i,
+                              selected: selectedId == i.id,
+                              onTap: () => onSelect?.call(i),
+                              onOpen: () => onOpen?.call(i),
+                              onContextMenu: (p) => onContextMenu?.call(i, p),
+                            ),
+                        ],
+                      ),
                     ),
                 ],
               ),
             ),
+          ),
         ],
       ),
     );
@@ -1085,4 +1267,94 @@ class _GridPainter extends CustomPainter {
       old.hourHeight != hourHeight ||
       old.line != line ||
       old.weekend != weekend;
+}
+
+/// Lays its child out [widthFactor] times as wide as itself and shows the
+/// part starting [leading] widths in, moved right by [shift] pixels. Used to
+/// keep the neighbouring pages of days ready while swiping between them.
+class _Pager extends SingleChildRenderObjectWidget {
+  const _Pager({
+    required this.widthFactor,
+    required this.leading,
+    required this.shift,
+    required super.child,
+  });
+
+  final double widthFactor;
+  final double leading;
+  final double shift;
+
+  @override
+  _RenderPager createRenderObject(BuildContext context) =>
+      _RenderPager(widthFactor, leading, shift);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderPager renderObject) =>
+      renderObject
+        ..widthFactor = widthFactor
+        ..leading = leading
+        ..shift = shift;
+}
+
+class _RenderPager extends RenderShiftedBox {
+  _RenderPager(this._widthFactor, this._leading, this._shift) : super(null);
+
+  double _widthFactor;
+  set widthFactor(double v) {
+    if (v == _widthFactor) return;
+    _widthFactor = v;
+    markNeedsLayout();
+  }
+
+  double _leading;
+  set leading(double v) {
+    if (v == _leading) return;
+    _leading = v;
+    markNeedsLayout();
+  }
+
+  double _shift;
+  set shift(double v) {
+    if (v == _shift) return;
+    _shift = v;
+    // Only the child's position changes; no relayout needed.
+    if (hasSize && child != null) {
+      (child!.parentData! as BoxParentData).offset = _childOffset;
+      markNeedsPaint();
+    }
+  }
+
+  Offset get _childOffset => Offset(-size.width * _leading + _shift, 0);
+
+  @override
+  void performLayout() {
+    final w = constraints.maxWidth;
+    final child = this.child!;
+    child.layout(
+      constraints.copyWith(
+        minWidth: w * _widthFactor,
+        maxWidth: w * _widthFactor,
+      ),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(Size(w, child.size.height));
+    (child.parentData! as BoxParentData).offset = _childOffset;
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final child = this.child;
+    if (child == null) return;
+    // RenderBox.hitTest already ignores points outside [size], so the
+    // off-screen pages can't be clicked either.
+    context.pushClipRect(
+      needsCompositing,
+      offset,
+      Offset.zero & size,
+      (context, offset) => context.paintChild(
+        child,
+        offset + (child.parentData! as BoxParentData).offset,
+      ),
+    );
+  }
 }
