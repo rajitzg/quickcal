@@ -173,6 +173,37 @@ void main() {
       expect(events.any((e) => e.title == 'Club lunch'), isFalse);
     });
 
+    test('a series that starts after the window shows nothing', () {
+      // Regression: rrule asserted when asked for instances before a
+      // series' start ("before >= start").
+      final events = parseIcs(
+        'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:spring\nSUMMARY:Spring class\n'
+        'DTSTART;TZID=America/New_York:20270105T100000\n'
+        'DTEND;TZID=America/New_York:20270105T110000\n'
+        'RRULE:FREQ=WEEKLY;BYDAY=TU,TH\n'
+        'END:VEVENT\nEND:VCALENDAR\n',
+      );
+      expect(
+        expandEvents(
+          events,
+          feedId: 'f',
+          from: ny(2026, 10, 25),
+          to: ny(2026, 11, 1),
+        ),
+        isEmpty,
+      );
+      // ...and shows up once the window reaches it.
+      expect(
+        expandEvents(
+          events,
+          feedId: 'f',
+          from: ny(2027, 1, 4),
+          to: ny(2027, 1, 9),
+        ).map((e) => e.start),
+        [ny(2027, 1, 5, 10), ny(2027, 1, 7, 10)],
+      );
+    });
+
     test('falls back to device-local time for unknown zone names', () {
       final events = parseIcs(
         'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:x\nSUMMARY:Outlook\n'

@@ -111,14 +111,23 @@ List<CalendarEvent> expandEvents(
         (e.duration ?? const Duration(days: 1)) + const Duration(days: 2);
     final after = e.start.instantToWall(from.subtract(slack));
     final before = e.start.instantToWall(to.add(const Duration(days: 2)));
-    final instances = rule
-        .getInstances(start: e.start.wall, before: before)
-        .where((w) => !w.isBefore(after))
-        .take(_maxInstances);
-    for (final wall in instances) {
-      final start = e.start.withWall(wall);
-      if (skip.contains(_key(start))) continue;
-      emit(e, start);
+    // A series that starts after the window has nothing in it (and rrule
+    // asserts that `before` isn't earlier than the start).
+    if (before.isBefore(e.start.wall)) continue;
+    try {
+      final instances = rule
+          .getInstances(start: e.start.wall, before: before)
+          .where((w) => !w.isBefore(after))
+          .take(_maxInstances);
+      for (final wall in instances) {
+        final start = e.start.withWall(wall);
+        if (skip.contains(_key(start))) continue;
+        emit(e, start);
+      }
+    } catch (_) {
+      // An unusual rule from someone else's feed must never take the app
+      // down: fall back to showing just the first occurrence.
+      emit(e, e.start);
     }
   }
 
