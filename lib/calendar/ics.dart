@@ -117,6 +117,7 @@ class IcsEvent {
     this.exdates = const [],
     this.recurrenceId,
     this.cancelled = false,
+    this.organizer,
   });
 
   final String uid;
@@ -134,6 +135,10 @@ class IcsEvent {
   /// Set on an edited single occurrence of a recurring series.
   final IcsTime? recurrenceId;
   final bool cancelled;
+
+  /// The organizer's address, lowercased (`ORGANIZER:mailto:…`). For Google
+  /// Calendar this is the calendar the event belongs to.
+  final String? organizer;
 }
 
 /// Parses every VEVENT in [source]. Malformed events are skipped.
@@ -204,7 +209,28 @@ IcsEvent? _buildEvent(Map<String, List<_Line>> props) {
         ? null
         : IcsTime.parse(recurrenceLine.value, recurrenceLine.params),
     cancelled: one('STATUS')?.value.trim().toUpperCase() == 'CANCELLED',
+    organizer: _address(one('ORGANIZER')?.value),
   );
+}
+
+String? _address(String? value) {
+  if (value == null) return null;
+  final v = value.trim().toLowerCase();
+  final address = v.startsWith('mailto:') ? v.substring(7) : v;
+  return address.isEmpty ? null : address;
+}
+
+/// The calendar's own name (`X-WR-CALNAME`), if the feed has one.
+String? icsCalendarName(String source) {
+  for (final line in _unfold(source)) {
+    if (line.startsWith('BEGIN:VEVENT')) break; // it's in the header
+    final parsed = _Line.parse(line);
+    if (parsed?.name == 'X-WR-CALNAME') {
+      final name = _unescape(parsed!.value).trim();
+      return name.isEmpty ? null : name;
+    }
+  }
+  return null;
 }
 
 /// Parses an RFC 5545 duration such as `PT1H30M` or `P1D`.

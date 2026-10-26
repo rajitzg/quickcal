@@ -29,6 +29,18 @@ class CalendarFeed {
     );
   }
 
+  /// For Google Calendar links, the calendar's address (`you@gmail.com`,
+  /// `…@group.calendar.google.com`), lowercased; otherwise null. It's the
+  /// path segment after `/ical/` in both secret and public addresses.
+  String? get calendarId {
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null || !uri.host.endsWith('google.com')) return null;
+    final segments = uri.pathSegments;
+    final i = segments.indexOf('ical');
+    if (i < 0 || i + 1 >= segments.length) return null;
+    return segments[i + 1].toLowerCase();
+  }
+
   CalendarFeed copyWith({
     String? name,
     String? url,

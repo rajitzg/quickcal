@@ -118,15 +118,36 @@ class CalendarsScreen extends StatelessWidget {
         : fetched == null
         ? 'Not loaded yet'
         : 'Updated ${DateFormat.MMMd().add_jm().format(fetched)}';
+    // What the link actually points at, to catch pasted-the-wrong-link
+    // mistakes: the calendar's own name and address.
+    final source = [
+      if (controller.calendarName(f.id) case final name?) '“$name”',
+      ?f.calendarId,
+    ].join(' · ');
+    final duplicate = controller.duplicateOf(f);
+    final errorStyle = TextStyle(color: Theme.of(context).colorScheme.error);
     return ListTile(
       leading: CircleAvatar(backgroundColor: Color(f.color), radius: 10),
       title: Text(f.name),
-      subtitle: Text(
-        status,
-        style: error == null
-            ? null
-            : TextStyle(color: Theme.of(context).colorScheme.error),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(status, style: error == null ? null : errorStyle),
+          if (source.isNotEmpty)
+            Text(
+              'Link points to $source',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (duplicate != null)
+            Text(
+              'Same calendar as “${duplicate.name}”. Check that you '
+              'copied each calendar\'s own link.',
+              style: errorStyle,
+            ),
+        ],
       ),
+      isThreeLine: source.isNotEmpty || duplicate != null,
       onTap: () => _edit(context, f),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,

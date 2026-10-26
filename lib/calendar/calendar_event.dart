@@ -7,6 +7,8 @@ class CalendarEvent {
   const CalendarEvent({
     required this.id,
     required this.feedId,
+    this.uid = '',
+    this.organizer,
     required this.title,
     required this.start,
     required this.end,
@@ -18,6 +20,11 @@ class CalendarEvent {
   /// Unique per occurrence: the event UID plus its start time.
   final String id;
   final String feedId;
+
+  /// The event's UID in its feed. The same event can appear in several
+  /// feeds (Google lists events you're invited to in your own calendar too).
+  final String uid;
+  final String? organizer;
   final String title;
   final DateTime start;
 
@@ -79,6 +86,8 @@ List<CalendarEvent> expandEvents(
     final occurrence = CalendarEvent(
       id: '${e.uid}@${localStart.millisecondsSinceEpoch}',
       feedId: feedId,
+      uid: e.uid,
+      organizer: e.organizer,
       title: e.summary,
       start: localStart,
       // Zero-length events still need to overlap the moment they start.
@@ -177,4 +186,32 @@ int _key(IcsTime t) {
   return t.isDate
       ? DateTime.utc(local.year, local.month, local.day).millisecondsSinceEpoch
       : local.millisecondsSinceEpoch;
+}
+
+/// Combines the occurrences from several feeds, showing each event once.
+///
+/// Google Calendar puts an event in the feed of the calendar that owns it
+/// *and* in the feed of every one of your calendars that's invited to it,
+/// with the same UID. Like Google Calendar itself, this keeps one copy:
+/// the one from the feed whose calendar organizes the event, otherwise the
+/// one from the earliest feed in [feeds]. Each feed's `calendarId` is its
+/// calendar's address (e.g. `you@gmail.com`), when known.
+List<CalendarEvent> mergeFeeds(
+  List<({String feedId, String? calendarId, List<CalendarEvent> events})> feeds,
+) {
+  final calendarOf = {for (final f in feeds) f.feedId: f.calendarId};
+  bool owns(CalendarEvent e) {
+    final calendar = calendarOf[e.feedId];
+    return calendar != null && calendar == e.organizer;
+  }
+
+  final kept = <String, CalendarEvent>{};
+  for (final f in feeds) {
+    for (final e in f.events) {
+      final key = '${e.uid}@${e.start.millisecondsSinceEpoch}';
+      final existing = kept[key];
+      if (existing == null || (owns(e) && !owns(existing))) kept[key] = e;
+    }
+  }
+  return kept.values.toList()..sort((a, b) => a.start.compareTo(b.start));
 }

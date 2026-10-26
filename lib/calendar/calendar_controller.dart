@@ -37,6 +37,7 @@ class CalendarController extends ChangeNotifier {
   final _parsed = <String, List<IcsEvent>>{};
   final _errors = <String, String>{};
   final _fetchedAt = <String, DateTime>{};
+  final _calendarNames = <String, String>{};
   bool _refreshing = false;
   int _version = 0;
   ({DateTime from, DateTime to, int version})? _memoKey;
@@ -48,6 +49,20 @@ class CalendarController extends ChangeNotifier {
   bool get refreshing => _refreshing;
   String? errorFor(String feedId) => _errors[feedId];
   DateTime? fetchedAt(String feedId) => _fetchedAt[feedId];
+
+  /// The name the feed gives its calendar (e.g. Google's calendar name).
+  String? calendarName(String feedId) => _calendarNames[feedId];
+
+  /// Another feed pointing at the same calendar as [feed], if any: usually a
+  /// link pasted twice.
+  CalendarFeed? duplicateOf(CalendarFeed feed) {
+    final id = feed.calendarId;
+    if (id == null) return null;
+    return _feeds
+        .where((f) => f.id != feed.id && f.calendarId == id)
+        .firstOrNull;
+  }
+
   CalendarFeed? feed(String id) => _feeds.where((f) => f.id == id).firstOrNull;
 
   void start() {
@@ -92,6 +107,7 @@ class CalendarController extends ChangeNotifier {
     _feeds = icsByFeed.keys.toList();
     for (final MapEntry(key: feed, value: ics) in icsByFeed.entries) {
       _parsed[feed.id] = parseIcs(ics);
+      _setName(feed.id, icsCalendarName(ics));
     }
     if (!_tzReady) {
       tzdata.initializeTimeZones();
@@ -116,13 +132,15 @@ class CalendarController extends ChangeNotifier {
   List<CalendarEvent> eventsBetween(DateTime from, DateTime to) {
     final key = (from: from, to: to, version: _version);
     if (_memoKey == key) return _memo;
-    final out = <CalendarEvent>[];
-    for (final f in _feeds) {
-      final events = _parsed[f.id];
-      if (!f.enabled || events == null) continue;
-      out.addAll(expandEvents(events, feedId: f.id, from: from, to: to));
-    }
-    out.sort((a, b) => a.start.compareTo(b.start));
+    final out = mergeFeeds([
+      for (final f in _feeds)
+        if (_parsed[f.id] case final events? when f.enabled)
+          (
+            feedId: f.id,
+            calendarId: f.calendarId,
+            events: expandEvents(events, feedId: f.id, from: from, to: to),
+          ),
+    ]);
     _memoKey = key;
     return _memo = out;
   }
@@ -140,6 +158,7 @@ class CalendarController extends ChangeNotifier {
         throw const FormatException('Not an iCal feed');
       }
       _parsed[f.id] = await Isolate.run(() => parseIcs(body));
+      _setName(f.id, icsCalendarName(body));
       _errors.remove(f.id);
       _fetchedAt[f.id] = DateTime.now();
       await (await _cacheFile(f)).writeAsString(body);
@@ -156,6 +175,7 @@ class CalendarController extends ChangeNotifier {
       if (!await file.exists()) return;
       final body = await file.readAsString();
       _parsed[f.id] = await Isolate.run(() => parseIcs(body));
+      _setName(f.id, icsCalendarName(body));
       _fetchedAt[f.id] = await file.lastModified();
       _changed();
     } catch (_) {
@@ -173,6 +193,14 @@ class CalendarController extends ChangeNotifier {
   Future<File> _cacheFile(CalendarFeed f) async {
     final dir = await getApplicationSupportDirectory();
     return File('${dir.path}/calendar_${f.id}.ics');
+  }
+
+  void _setName(String feedId, String? name) {
+    if (name == null) {
+      _calendarNames.remove(feedId);
+    } else {
+      _calendarNames[feedId] = name;
+    }
   }
 
   void _changed() {

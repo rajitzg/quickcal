@@ -154,7 +154,7 @@ class _CalendarPageState extends State<CalendarPage> {
     final first = _daysAround(-1).first, last = _daysAround(1).last;
     return widget.feeds
         ?.eventsBetween(first, _dayAfter(last))
-        .where((e) => 'e:${e.id}' == itemId)
+        .where((e) => 'e:${e.feedId}:${e.id}' == itemId)
         .firstOrNull;
   }
 
@@ -337,7 +337,8 @@ class _CalendarPageState extends State<CalendarPage> {
 
     for (final e in widget.feeds?.eventsBetween(from, to) ?? const []) {
       final item = CalItem(
-        id: 'e:${e.id}',
+        // The same event can come from more than one feed.
+        id: 'e:${e.feedId}:${e.id}',
         start: e.start,
         end: e.end,
         title: e.title,
