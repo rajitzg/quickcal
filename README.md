@@ -111,6 +111,8 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 
 **Scrolling sideways:** swipe with two fingers, or use a horizontal scroll wheel or Shift+wheel. The calendar follows your fingers and snaps to the nearest **day** when you let go, so you can move a week view along one day at a time. A longer swipe or a flick moves several days, up to a week. The work week view moves a week at a time instead, since its days aren't consecutive.
 
+**Zooming:** pinch on the trackpad (or with two fingers on the phone) to stretch or squish the hours. Fully squished, the whole day fits on screen; zoomed in, an hour can be about 3× its normal height. The time under your fingers stays in place.
+
 **Jumping a whole page:** the ‹ › buttons and the arrow keys move a full week (or 3 days, or 1). **Today** brings back the normal Sunday-to-Saturday week.
 
 ### Try it without Firebase

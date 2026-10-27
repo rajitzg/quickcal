@@ -168,7 +168,20 @@ class WeekCalendarState extends State<WeekCalendar>
 
   /// Trackpad gesture in progress: shift at its start, and the axis it
   /// locked to (null until it has moved far enough to tell).
-  ({double base, Axis? axis, double lockDx})? _pan;
+  _TrackpadGesture? _pan;
+
+  // ---- Zoom (pinch) ----
+  /// Hour height after pinching; null until the user zooms.
+  double? _zoomedHourHeight;
+  double get _hourHeight => _zoomedHourHeight ?? widget.hourHeight;
+  static const _maxHourHeight = 160.0;
+
+  /// Fingers on the screen, for two-finger pinches.
+  final _touches = <int, Offset>{};
+
+  /// A two-finger pinch in progress: finger distance and hour height when
+  /// it started.
+  ({double span, double hourHeight})? _pinch;
   VelocityTracker? _velocity;
   Timer? _wheelSettle;
 
@@ -202,10 +215,7 @@ class WeekCalendarState extends State<WeekCalendar>
         ? math.max(0, now.hour * 60 + now.minute - 90)
         : 8 * 60 - 30;
     _scroll.jumpTo(
-      (minutes * widget.hourHeight / 60).clamp(
-        0,
-        _scroll.position.maxScrollExtent,
-      ),
+      (minutes * _hourHeight / 60).clamp(0, _scroll.position.maxScrollExtent),
     );
   }
 
@@ -241,7 +251,7 @@ class WeekCalendarState extends State<WeekCalendar>
       _first,
       _first + widget.days.length - 1,
     );
-    return (day, local.dy / widget.hourHeight * 60);
+    return (day, local.dy / _hourHeight * 60);
   }
 
   // ---- Drag lifecycle --------------------------------------------------
@@ -445,6 +455,10 @@ class WeekCalendarState extends State<WeekCalendar>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Listener(
+      onPointerDown: _fingerDown,
+      onPointerMove: _fingerMove,
+      onPointerUp: _fingerUp,
+      onPointerCancel: _fingerUp,
       onPointerPanZoomStart: _panStart,
       onPointerPanZoomUpdate: _panUpdate,
       onPointerPanZoomEnd: _panEnd,
@@ -486,13 +500,13 @@ class WeekCalendarState extends State<WeekCalendar>
   bool _touchSwiping = false;
 
   void _touchSwipeStart(DragStartDetails d) {
-    if (!_paging || _op != null) return;
+    if (!_paging || _op != null || _pinch != null) return;
     _pageAnim.stop();
     _touchSwiping = true;
   }
 
   void _touchSwipeUpdate(DragUpdateDetails d) {
-    if (!_touchSwiping) return;
+    if (!_touchSwiping || _pinch != null) return;
     setState(() => _shift = _clampShift(_shift + d.delta.dx));
   }
 
@@ -516,41 +530,55 @@ class WeekCalendarState extends State<WeekCalendar>
   // ---- Paging gestures --------------------------------------------------
 
   void _panStart(PointerPanZoomStartEvent e) {
-    if (!_paging || _op != null) return;
-    _pageAnim.stop();
-    _pan = (base: _shift, axis: null, lockDx: 0);
+    if (_op != null) return;
+    if (_paging) _pageAnim.stop();
+    _pan = _TrackpadGesture(shift: _shift, hourHeight: _hourHeight);
     _velocity = VelocityTracker.withKind(e.kind);
   }
 
   void _panUpdate(PointerPanZoomUpdateEvent e) {
-    final pan = _pan;
-    if (pan == null) return;
+    final p = _pan;
+    if (p == null) return;
     _velocity?.addPosition(e.timeStamp, e.pan);
-    if (pan.axis == null) {
+    // Pinching zooms the hours; it wins unless the gesture has already
+    // turned into a sideways swipe.
+    if (!p.zoom && p.axis != Axis.horizontal && (e.scale - 1).abs() > 0.04) {
+      p.zoom = true;
+    }
+    if (p.zoom) {
+      _zoomTo(p.hourHeight * e.scale, e.position);
+      return;
+    }
+    if (!_paging) return;
+    if (p.axis == null) {
       if (e.pan.distance < 8) return;
       // Lock to the dominant direction so vertical scrolling never drifts
       // sideways and vice versa.
-      _pan = (
-        base: pan.base,
-        axis: e.pan.dx.abs() > e.pan.dy.abs() ? Axis.horizontal : Axis.vertical,
-        lockDx: e.pan.dx,
-      );
+      p
+        ..axis = e.pan.dx.abs() > e.pan.dy.abs()
+            ? Axis.horizontal
+            : Axis.vertical
+        ..lockDx = e.pan.dx;
     }
-    final p = _pan!;
     if (p.axis == Axis.horizontal) {
-      setState(() => _shift = _clampShift(p.base + e.pan.dx - p.lockDx));
+      setState(() => _shift = _clampShift(p.shift + e.pan.dx - p.lockDx));
     }
   }
 
   void _panEnd(PointerPanZoomEndEvent e) {
-    final pan = _pan;
+    final p = _pan;
     _pan = null;
-    if (pan?.axis != Axis.horizontal) return;
+    if (p == null || p.zoom || p.axis != Axis.horizontal) return;
     _settle(_velocity?.getVelocity().pixelsPerSecond.dx ?? 0);
   }
 
-  /// Horizontal mouse wheels, Shift+wheel, and trackpads in browsers.
+  /// Horizontal mouse wheels, Shift+wheel, and trackpads in browsers (which
+  /// also report pinches as scale events).
   void _wheel(PointerSignalEvent e) {
+    if (e is PointerScaleEvent) {
+      _zoomTo(_hourHeight * e.scale, e.position);
+      return;
+    }
     if (!_paging || e is! PointerScrollEvent || _op != null) return;
     final d = e.scrollDelta;
     if (d.dx.abs() <= d.dy.abs()) return;
@@ -561,6 +589,72 @@ class WeekCalendarState extends State<WeekCalendar>
   }
 
   double _clampShift(double v) => v.clamp(-_pageWidth, _pageWidth).toDouble();
+
+  // ---- Zoom ----------------------------------------------------------------
+
+  /// Fully zoomed out, the whole day fits in the visible grid.
+  double get _minHourHeight {
+    final box = _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    return box != null && box.hasSize ? box.size.height / 24 : 12;
+  }
+
+  /// Sets the hour height, keeping the time under [focal] (a global
+  /// position) where it is, like zooming a map.
+  void _zoomTo(double hourHeight, Offset focal) {
+    final box = _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || !_scroll.hasClients) return;
+    final old = _hourHeight;
+    final h = hourHeight.clamp(_minHourHeight, _maxHourHeight).toDouble();
+    if ((h - old).abs() < 0.01) return;
+    final y = box.globalToLocal(focal).dy.clamp(0.0, box.size.height);
+    final minutes = (_scroll.offset + y) / old * 60;
+    final maxOffset = math.max(0.0, h * 24 - box.size.height);
+    final offset = (minutes / 60 * h - y).clamp(0.0, maxOffset);
+    // Set the new offset without animating or clamping to the old content
+    // height; the relayout below brings in the new one.
+    _scroll.position.correctPixels(offset);
+    setState(() => _zoomedHourHeight = h);
+  }
+
+  void _fingerDown(PointerDownEvent e) {
+    if (e.kind != PointerDeviceKind.touch) return;
+    _touches[e.pointer] = e.position;
+    if (_touches.length == 2 && _op == null) {
+      // A second finger: pinch, and stop any swipe the first one started.
+      if (_touchSwiping) {
+        _touchSwiping = false;
+        _settle(0);
+      }
+      setState(
+        () => _pinch = (
+          span: math.max(_fingerSpan(), 24.0),
+          hourHeight: _hourHeight,
+        ),
+      );
+    }
+  }
+
+  void _fingerMove(PointerMoveEvent e) {
+    if (!_touches.containsKey(e.pointer)) return;
+    _touches[e.pointer] = e.position;
+    final pinch = _pinch;
+    if (pinch == null || _touches.length < 2) return;
+    final points = _touches.values.take(2).toList();
+    _zoomTo(
+      pinch.hourHeight * _fingerSpan() / pinch.span,
+      (points[0] + points[1]) / 2,
+    );
+  }
+
+  void _fingerUp(PointerEvent e) {
+    _touches.remove(e.pointer);
+    if (_touches.length < 2 && _pinch != null) setState(() => _pinch = null);
+  }
+
+  double _fingerSpan() {
+    final points = _touches.values.take(2).toList();
+    return (points[0] - points[1]).distance;
+  }
 
   /// The slide in progress: where it's heading, how far that moves (in
   /// days, or in pages), and which callback reports it.
@@ -637,7 +731,7 @@ class WeekCalendarState extends State<WeekCalendar>
   }
 
   Widget _buildGrid(ThemeData theme) {
-    final height = widget.hourHeight * 24;
+    final height = _hourHeight * 24;
     return DragTarget<Task>(
       onWillAcceptWithDetails: (_) => true,
       onMove: (details) {
@@ -660,6 +754,8 @@ class WeekCalendarState extends State<WeekCalendar>
       },
       builder: (context, candidates, rejected) => SingleChildScrollView(
         key: _viewportKey,
+        // While two fingers pinch, they zoom rather than scroll.
+        physics: _pinch != null ? const NeverScrollableScrollPhysics() : null,
         controller: _scroll,
         child: SizedBox(
           height: height,
@@ -668,7 +764,7 @@ class WeekCalendarState extends State<WeekCalendar>
             children: [
               SizedBox(
                 width: gutterWidth,
-                child: _HourLabels(hourHeight: widget.hourHeight),
+                child: _HourLabels(hourHeight: _hourHeight),
               ),
               Expanded(
                 child: LayoutBuilder(
@@ -763,7 +859,7 @@ class WeekCalendarState extends State<WeekCalendar>
             child: CustomPaint(
               painter: _GridPainter(
                 days: days.length,
-                hourHeight: widget.hourHeight,
+                hourHeight: _hourHeight,
                 line: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
                 weekend: theme.colorScheme.onSurface.withValues(alpha: 0.02),
                 weekendDays: [
@@ -788,10 +884,10 @@ class WeekCalendarState extends State<WeekCalendar>
           (n) => n + 1,
           ifAbsent: () => 0,
         );
-        final top = p.startMin * widget.hourHeight / 60;
-        final minHeight = widget.hourHeight / 4;
+        final top = p.startMin * _hourHeight / 60;
+        final minHeight = _hourHeight / 4;
         final h = math.max(
-          (p.endMin - p.startMin) * widget.hourHeight / 60,
+          (p.endMin - p.startMin) * _hourHeight / 60,
           minHeight,
         );
         final (left, width) = _place(p, dayWidth - 6);
@@ -842,8 +938,8 @@ class WeekCalendarState extends State<WeekCalendar>
           : theme.colorScheme.primary.toARGB32();
       children.add(
         Positioned(
-          top: startMin * widget.hourHeight / 60,
-          height: (endMin - startMin) * widget.hourHeight / 60,
+          top: startMin * _hourHeight / 60,
+          height: (endMin - startMin) * _hourHeight / 60,
           left: op.day * dayWidth + 1,
           width: dayWidth - 6,
           child: IgnorePointer(
@@ -855,7 +951,7 @@ class WeekCalendarState extends State<WeekCalendar>
                 title: op.task?.title ?? 'New session',
                 color: color,
               ),
-              height: (endMin - startMin) * widget.hourHeight / 60,
+              height: (endMin - startMin) * _hourHeight / 60,
               width: dayWidth - 6,
               selected: false,
               dragging: true,
@@ -868,7 +964,7 @@ class WeekCalendarState extends State<WeekCalendar>
     // Current time.
     final todayIndex = days.indexWhere((d) => dateOnly(d) == dateOnly(now));
     if (todayIndex >= 0) {
-      final y = minutesFrom(now, now) * widget.hourHeight / 60;
+      final y = minutesFrom(now, now) * _hourHeight / 60;
       const red = Color(0xFFE5484D);
       children
         ..add(
@@ -1621,4 +1717,17 @@ class _RenderPager extends RenderShiftedBox {
       ),
     );
   }
+}
+
+/// A two-finger trackpad gesture: a sideways swipe, a vertical scroll, or a
+/// pinch, decided once it has moved far enough to tell.
+class _TrackpadGesture {
+  _TrackpadGesture({required this.shift, required this.hourHeight});
+
+  /// Page shift and hour height when the gesture started.
+  final double shift;
+  final double hourHeight;
+  Axis? axis;
+  bool zoom = false;
+  double lockDx = 0;
 }
