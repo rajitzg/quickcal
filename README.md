@@ -51,6 +51,21 @@ Create an account on one device, then sign in with the same email on the other.
 - **Mac:** `flutter build macos --release`, then copy `build/macos/Build/Products/Release/taskflow.app` to `/Applications`.
 - **Android:** `flutter build apk --release`, then install `build/app/outputs/flutter-apk/app-release.apk` on the phone. Or run `flutter install` with the phone connected.
 
+## On Android
+**Calendar tab:** the same planner as on the desktop, made for fingers. It opens on 3 days by default; switch to 1 day or the week in the toolbar.
+- **Change days:** swipe sideways. The calendar follows your finger and snaps.
+- **Move a block:** long-press it, then drag. A plain drag scrolls.
+- **Resize a block:** tap it to select it, then drag the handles at its top and bottom edges.
+- **Block actions:** tap a selected block for Edit task, Mark done, Add another session and Delete session.
+- **New session:** long-press empty space for an hour, or keep dragging to set the length.
+- **Schedule a task:** the tray along the bottom lists your open tasks, unscheduled ones first. Long-press one and drag it up onto the calendar. Tap a task to edit it.
+
+**Home screen widget:** long-press your home screen, choose Widgets, then **Taskflow**.
+- **What it shows:** your next 7 days, i.e. work sessions, deadlines and events from subscribed calendars, in their colors. Today also lists overdue tasks and hides what has already ended. Tap it to open the app.
+- **When it updates:** whenever the app changes anything, and about every 30 minutes in the background (Android doesn't allow more often than every 15). Changes made on the Mac show up without opening the phone app.
+- **Before the first update:** sign in on the phone once. If the widget says "Open Taskflow to load your agenda", open the app once.
+- **If it stops updating:** some phones (Samsung, Xiaomi and others) pause background work for apps you rarely open. Set battery usage for Taskflow to Unrestricted.
+
 ## Due dates vs. scheduled time
 A task has two separate kinds of dates, and the task editor shows them in separate sections:
 - **Due:** the deadline, optionally with a time. It shows in the calendar's all-day row and makes the task overdue once it passes.
@@ -144,6 +159,9 @@ lib/
   widgets/task_panel.dart    Planner sidebar: draggable tasks + calendar list
   screens/calendar_page.dart The planner screen
   demo_main.dart             Sample-data entry point
+  home_widget/agenda.dart    Rows for the Android home screen widget (unit-tested)
+  home_widget/background.dart  30-minute background refresh of the widget
+android/app/src/main/kotlin/…/AgendaWidget*.kt  The native widget that draws those rows
   screens/                   Sign-in and home (nav rail on Mac, bottom bar on phone)
   widgets/                   Task row and the add/edit sheet
 test/

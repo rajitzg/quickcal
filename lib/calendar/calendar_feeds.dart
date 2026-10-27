@@ -89,6 +89,15 @@ class CalendarFeedRepository {
     ];
   });
 
+  /// The feed list, read once (for background refreshes).
+  Future<List<CalendarFeed>> fetch() async {
+    final snap = await _doc.get();
+    final list = snap.data()?['feeds'] as List<dynamic>? ?? const [];
+    return [
+      for (final m in list) CalendarFeed.fromMap(Map<String, dynamic>.from(m)),
+    ];
+  }
+
   Future<void> save(List<CalendarFeed> feeds) => _doc.set({
     'feeds': [for (final f in feeds) f.toMap()],
   });

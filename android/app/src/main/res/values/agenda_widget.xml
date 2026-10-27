@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agenda_widget_title">Taskflow</string>
+    <string name="agenda_widget_description">Your next few days: work sessions, deadlines and calendar events</string>
+    <string name="agenda_widget_empty">Open Taskflow to load your agenda</string>
+
+    <color name="widget_background">#F2FFFFFF</color>
+    <color name="widget_text">#FF1F1F1F</color>
+    <color name="widget_muted">#FF5F6368</color>
+    <color name="widget_accent">#FF3F51B5</color>
+</resources>

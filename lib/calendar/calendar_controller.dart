@@ -93,6 +93,21 @@ class CalendarController extends ChangeNotifier {
     _timer = Timer.periodic(refreshEvery, (_) => refresh());
   }
 
+  /// Loads the feed list and every enabled feed once, without listening
+  /// for changes: for background work such as refreshing the home screen
+  /// widget. Falls back to cached copies when a feed can't be downloaded.
+  Future<void> loadOnce() async {
+    if (!_tzReady) {
+      tzdata.initializeTimeZones();
+      _tzReady = true;
+    }
+    _feeds = await _repo.fetch();
+    for (final f in _feeds.where((f) => f.enabled)) {
+      await _loadCache(f);
+    }
+    await refresh();
+  }
+
   Future<void> saveFeeds(List<CalendarFeed> feeds) async {
     if (!_demo) return _repo.save(feeds);
     _feeds = feeds;

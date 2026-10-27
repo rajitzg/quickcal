@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
@@ -17,6 +18,10 @@ const _dragDevices = {
   PointerDeviceKind.stylus,
   PointerDeviceKind.invertedStylus,
 };
+
+/// Fingers: items are picked up with a long press instead (a plain drag
+/// scrolls), and sideways swipes change pages.
+const _touch = {PointerDeviceKind.touch};
 
 enum _Mode { move, resizeTop, resizeBottom, create, drop }
 
@@ -36,6 +41,10 @@ class _DragOp {
 
   /// A moved block is being dragged out of the calendar (to unschedule it).
   bool outside = false;
+
+  /// Shortest block drawn on empty space, in minutes. A long press with a
+  /// finger (no drag) makes an hour-long block.
+  double minCreate = 15;
 }
 
 /// A scrollable day/week time grid in the style of Notion Calendar.
@@ -228,11 +237,17 @@ class WeekCalendarState extends State<WeekCalendar>
 
   // ---- Drag lifecycle --------------------------------------------------
 
-  void _begin(_Mode mode, Offset global, {CalItem? item}) {
+  void _begin(
+    _Mode mode,
+    Offset global, {
+    CalItem? item,
+    double minCreate = 15,
+  }) {
     final slot = _slotAt(global);
     if (slot == null) return;
     final op = _DragOp(mode, item: item, anchorDay: slot.$1, anchorMin: slot.$2)
-      ..day = slot.$1;
+      ..day = slot.$1
+      ..minCreate = minCreate;
     if (item != null) {
       op
         ..start = item.start
@@ -322,7 +337,7 @@ class WeekCalendarState extends State<WeekCalendar>
         final day = days[op.anchorDay];
         final a = snapDown(op.anchorMin);
         var b = snap(minutes);
-        if ((b - a).abs() < 15) b = a + 15;
+        if ((b - a).abs() < op.minCreate) b = a + op.minCreate;
         final lo = math.min(a, b), hi = math.max(a, b);
         op
           ..day = op.anchorDay
@@ -374,6 +389,11 @@ class WeekCalendarState extends State<WeekCalendar>
     setState(() {});
   }
 
+  /// Ends a touch move of [item] if the system cancelled the gesture.
+  void _cancelItem(CalItem item) {
+    if (_op?.item?.id == item.id) _cancel();
+  }
+
   void _cancel() {
     if (_op case _DragOp(outside: true, :final item?)) {
       widget.onDragOutside?.call(item, null);
@@ -420,24 +440,57 @@ class WeekCalendarState extends State<WeekCalendar>
       onPointerPanZoomUpdate: _panUpdate,
       onPointerPanZoomEnd: _panEnd,
       onPointerSignal: _wheel,
-      child: Column(
-        children: [
-          _DayHeader(days: _all, now: _now, gutter: gutterWidth, pager: _pager),
-          _AllDayRow(
-            days: _all,
-            pager: _pager,
-            items: widget.allDayItems,
-            gutter: gutterWidth,
-            selectedId: widget.selectedId,
-            onSelect: widget.onSelect,
-            onOpen: widget.onOpen,
-            onContextMenu: widget.onContextMenu,
-          ),
-          Divider(height: 1, color: theme.dividerColor),
-          Expanded(child: _buildGrid(theme)),
-        ],
+      child: GestureDetector(
+        supportedDevices: _touch,
+        onHorizontalDragStart: _touchSwipeStart,
+        onHorizontalDragUpdate: _touchSwipeUpdate,
+        onHorizontalDragEnd: _touchSwipeEnd,
+        onHorizontalDragCancel: () => _touchSwipeEnd(null),
+        child: Column(
+          children: [
+            _DayHeader(
+              days: _all,
+              now: _now,
+              gutter: gutterWidth,
+              pager: _pager,
+            ),
+            _AllDayRow(
+              days: _all,
+              pager: _pager,
+              items: widget.allDayItems,
+              gutter: gutterWidth,
+              selectedId: widget.selectedId,
+              onSelect: widget.onSelect,
+              onOpen: widget.onOpen,
+              onContextMenu: widget.onContextMenu,
+            ),
+            Divider(height: 1, color: theme.dividerColor),
+            Expanded(child: _buildGrid(theme)),
+          ],
+        ),
       ),
     );
+  }
+
+  // ---- Touch swipes ------------------------------------------------------
+
+  bool _touchSwiping = false;
+
+  void _touchSwipeStart(DragStartDetails d) {
+    if (!_paging || _op != null) return;
+    _pageAnim.stop();
+    _touchSwiping = true;
+  }
+
+  void _touchSwipeUpdate(DragUpdateDetails d) {
+    if (!_touchSwiping) return;
+    setState(() => _shift = _clampShift(_shift + d.delta.dx));
+  }
+
+  void _touchSwipeEnd(DragEndDetails? d) {
+    if (!_touchSwiping) return;
+    _touchSwiping = false;
+    _settle(d?.primaryVelocity ?? 0);
   }
 
   /// Shows the visible page of a row of [_all] day columns, shifted by the
@@ -651,26 +704,37 @@ class WeekCalendarState extends State<WeekCalendar>
       Positioned.fill(
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          supportedDevices: _dragDevices,
-          // Measure drags from where the button went down, not from where
-          // the drag was recognized a few pixels later.
-          dragStartBehavior: DragStartBehavior.down,
+          supportedDevices: _touch,
           onTap: () => widget.onSelect?.call(null),
-          onPanStart: (d) => _begin(_Mode.create, d.globalPosition),
-          onPanUpdate: (d) => _update(d.globalPosition),
-          onPanEnd: (_) => _end(),
-          onPanCancel: _cancel,
-          child: CustomPaint(
-            painter: _GridPainter(
-              days: days.length,
-              hourHeight: widget.hourHeight,
-              line: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-              weekend: theme.colorScheme.onSurface.withValues(alpha: 0.02),
-              weekendDays: [
-                for (final d in days)
-                  d.weekday == DateTime.saturday ||
-                      d.weekday == DateTime.sunday,
-              ],
+          onLongPressStart: (d) {
+            HapticFeedback.mediumImpact();
+            _begin(_Mode.create, d.globalPosition, minCreate: 60);
+          },
+          onLongPressMoveUpdate: (d) => _update(d.globalPosition),
+          onLongPressEnd: (_) => _end(),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            supportedDevices: _dragDevices,
+            // Measure drags from where the button went down, not from where
+            // the drag was recognized a few pixels later.
+            dragStartBehavior: DragStartBehavior.down,
+            onTap: () => widget.onSelect?.call(null),
+            onPanStart: (d) => _begin(_Mode.create, d.globalPosition),
+            onPanUpdate: (d) => _update(d.globalPosition),
+            onPanEnd: (_) => _end(),
+            onPanCancel: _cancel,
+            child: CustomPaint(
+              painter: _GridPainter(
+                days: days.length,
+                hourHeight: widget.hourHeight,
+                line: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                weekend: theme.colorScheme.onSurface.withValues(alpha: 0.02),
+                weekendDays: [
+                  for (final d in days)
+                    d.weekday == DateTime.saturday ||
+                        d.weekday == DateTime.sunday,
+                ],
+              ),
             ),
           ),
         ),
@@ -717,6 +781,12 @@ class WeekCalendarState extends State<WeekCalendar>
               onDragUpdate: _update,
               onDragEnd: _end,
               onDragCancel: _cancel,
+              onTouchCancel: () => _cancelItem(p.item),
+              // Fingers: tap selects; tapping the selected block opens its
+              // menu (there's no right-click or double-click).
+              onTouchTap: (pos) => widget.selectedId == p.item.id
+                  ? widget.onContextMenu?.call(p.item, pos)
+                  : widget.onSelect?.call(p.item),
             ),
           ),
         );
@@ -810,6 +880,8 @@ class _EventBlock extends StatelessWidget {
     this.onDragUpdate,
     this.onDragEnd,
     this.onDragCancel,
+    this.onTouchCancel,
+    this.onTouchTap,
   });
 
   final CalItem item;
@@ -830,6 +902,8 @@ class _EventBlock extends StatelessWidget {
   final void Function(Offset globalPosition)? onDragUpdate;
   final VoidCallback? onDragEnd;
   final VoidCallback? onDragCancel;
+  final VoidCallback? onTouchCancel;
+  final void Function(Offset globalPosition)? onTouchTap;
 
   @override
   Widget build(BuildContext context) {
@@ -947,56 +1021,104 @@ class _EventBlock extends StatelessWidget {
     }
 
     final editable = item.editable && onDragStart != null;
-    final body = Listener(
-      onPointerDown: (e) {
-        if (e.buttons == kPrimaryButton) onDown?.call();
-      },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        supportedDevices: _dragDevices,
-        // Measure drags from where the button went down, not from where
-        // the drag was recognized a few pixels later.
-        dragStartBehavior: DragStartBehavior.down,
-        onDoubleTap: onOpen,
-        onSecondaryTapUp: (d) => onContextMenu?.call(d.globalPosition),
-        onPanStart: editable
-            ? (d) => onDragStart!(_Mode.move, d.globalPosition)
-            : null,
-        onPanUpdate: editable ? (d) => onDragUpdate!(d.globalPosition) : null,
-        onPanEnd: editable ? (_) => onDragEnd!() : null,
-        onPanCancel: editable ? onDragCancel : null,
-        child: MouseRegion(
-          cursor: !editable
-              ? SystemMouseCursors.click
-              : dragging
-              ? SystemMouseCursors.grabbing
-              : SystemMouseCursors.grab,
-          child: content,
+    final body = GestureDetector(
+      // Fingers: tap to select, long-press to pick up and move.
+      behavior: HitTestBehavior.opaque,
+      supportedDevices: _touch,
+      onTapUp: (d) => onTouchTap?.call(d.globalPosition),
+      onLongPressStart: editable
+          ? (d) {
+              HapticFeedback.mediumImpact();
+              onDragStart!(_Mode.move, d.globalPosition);
+            }
+          : null,
+      onLongPressMoveUpdate: editable
+          ? (d) => onDragUpdate!(d.globalPosition)
+          : null,
+      onLongPressEnd: editable ? (_) => onDragEnd!() : null,
+      onLongPressCancel: editable ? onTouchCancel : null,
+      child: Listener(
+        onPointerDown: (e) {
+          // Mouse: select on press. Fingers select on tap (above), so that
+          // scrolling past a block doesn't select it.
+          if (e.kind != PointerDeviceKind.touch &&
+              e.buttons == kPrimaryButton) {
+            onDown?.call();
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          supportedDevices: _dragDevices,
+          // Measure drags from where the button went down, not from where
+          // the drag was recognized a few pixels later.
+          dragStartBehavior: DragStartBehavior.down,
+          onDoubleTap: onOpen,
+          onSecondaryTapUp: (d) => onContextMenu?.call(d.globalPosition),
+          onPanStart: editable
+              ? (d) => onDragStart!(_Mode.move, d.globalPosition)
+              : null,
+          onPanUpdate: editable ? (d) => onDragUpdate!(d.globalPosition) : null,
+          onPanEnd: editable ? (_) => onDragEnd!() : null,
+          onPanCancel: editable ? onDragCancel : null,
+          child: MouseRegion(
+            cursor: !editable
+                ? SystemMouseCursors.click
+                : dragging
+                ? SystemMouseCursors.grabbing
+                : SystemMouseCursors.grab,
+            child: content,
+          ),
         ),
       ),
     );
     if (!editable) return body;
 
-    final edge = math.min(7.0, height / 4);
+    // Resize handles along the top and bottom edges: thin strips for the
+    // mouse; once the block is selected, taller strips that fingers can
+    // grab too (with dots to show them).
+    final edge = selected
+        ? math.min(24.0, height / 3)
+        : math.min(7.0, height / 4);
     Widget handle(_Mode mode) => GestureDetector(
       behavior: HitTestBehavior.opaque,
-      supportedDevices: _dragDevices,
+      supportedDevices: selected ? {..._dragDevices, ..._touch} : _dragDevices,
       // Measure drags from where the button went down, not from where
       // the drag was recognized a few pixels later.
       dragStartBehavior: DragStartBehavior.down,
-      onPanStart: (d) => onDragStart!(mode, d.globalPosition),
-      onPanUpdate: (d) => onDragUpdate!(d.globalPosition),
-      onPanEnd: (_) => onDragEnd!(),
-      onPanCancel: onDragCancel,
+      // A finger tap (not a drag) on a handle is a tap on the block: on a
+      // short selected block the handles cover most of it.
+      onTapUp: (d) {
+        if (d.kind == PointerDeviceKind.touch) {
+          onTouchTap?.call(d.globalPosition);
+        }
+      },
+      // Vertical (not pan) so a finger's drag here beats the scroll view's.
+      onVerticalDragStart: (d) => onDragStart!(mode, d.globalPosition),
+      onVerticalDragUpdate: (d) => onDragUpdate!(d.globalPosition),
+      onVerticalDragEnd: (_) => onDragEnd!(),
+      onVerticalDragCancel: onDragCancel,
       child: const MouseRegion(
         cursor: SystemMouseCursors.resizeUpDown,
         child: SizedBox.expand(),
+      ),
+    );
+    Widget dot() => Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        shape: BoxShape.circle,
+        border: Border.all(color: theme.colorScheme.onSurface, width: 1.5),
       ),
     );
     return Stack(
       fit: StackFit.expand,
       children: [
         body,
+        if (selected) ...[
+          Positioned(top: 2, right: 4, child: IgnorePointer(child: dot())),
+          Positioned(bottom: 2, left: 6, child: IgnorePointer(child: dot())),
+        ],
         Positioned(
           top: 0,
           left: 0,

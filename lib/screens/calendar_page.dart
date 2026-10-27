@@ -11,6 +11,7 @@ import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
 import '../widgets/task_panel.dart';
+import '../widgets/task_tile.dart';
 import '../widgets/week_calendar.dart';
 
 typedef EditTask = Future<void> Function(Task task, {bool isNew});
@@ -59,7 +60,16 @@ enum _Span {
 class _CalendarPageState extends State<CalendarPage> {
   final _focusNode = FocusNode(debugLabel: 'calendar');
   late DateTime _focusDay = dateOnly(_now);
-  _Span _span = _Span.week;
+
+  /// The view the user picked; until then, a week on desktop and three
+  /// days on a phone.
+  _Span? _spanChoice;
+  _Span get _span => _spanChoice ?? (_isPhone ? _Span.threeDays : _Span.week);
+
+  /// Phone-sized: no sidebar (tasks come from a tray instead), touch-sized
+  /// hours.
+  bool get _isPhone => MediaQuery.sizeOf(context).width < 700;
+  bool _loadedRange = false;
   String? _selectedId;
   bool _sidebarOpen = true;
   final _calendarKey = GlobalKey<WeekCalendarState>();
@@ -73,9 +83,13 @@ class _CalendarPageState extends State<CalendarPage> {
   DateTime get _now => widget.now ?? DateTime.now();
 
   @override
-  void initState() {
-    super.initState();
-    store.ensureSessionsFrom(_daysAround(-1).first);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Needs the screen size (to pick the view), so not in initState.
+    if (!_loadedRange) {
+      _loadedRange = true;
+      store.ensureSessionsFrom(_daysAround(-1).first);
+    }
   }
 
   @override
@@ -392,7 +406,7 @@ class _CalendarPageState extends State<CalendarPage> {
               SingleActivator(
                 LogicalKeyboardKey(s.key.toLowerCase().codeUnitAt(0)),
               ): () =>
-                  setState(() => _span = s),
+                  setState(() => _spanChoice = s),
             const SingleActivator(LogicalKeyboardKey.escape): () =>
                 setState(() => _selectedId = null),
             const SingleActivator(LogicalKeyboardKey.delete): _deleteSelected,
@@ -409,7 +423,7 @@ class _CalendarPageState extends State<CalendarPage> {
               },
               child: Row(
                 children: [
-                  if (_sidebarOpen) ...[
+                  if (_sidebarOpen && !_isPhone) ...[
                     SizedBox(
                       key: _panelKey,
                       // Narrower in small windows so the calendar keeps room.
@@ -443,6 +457,7 @@ class _CalendarPageState extends State<CalendarPage> {
                         Expanded(
                           child: WeekCalendar(
                             key: _calendarKey,
+                            hourHeight: _isPhone ? 56 : 48,
                             days: days,
                             prevDays: prev,
                             nextDays: next,
@@ -481,6 +496,12 @@ class _CalendarPageState extends State<CalendarPage> {
                             onDropTask: _schedule,
                           ),
                         ),
+                        if (_isPhone)
+                          _TaskTray(
+                            store: store,
+                            now: _now,
+                            onEditTask: (t) => widget.editTask(t),
+                          ),
                       ],
                     ),
                   ),
@@ -515,12 +536,16 @@ class _CalendarPageState extends State<CalendarPage> {
           padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
           child: Row(
             children: [
-              IconButton(
-                tooltip: _sidebarOpen ? 'Hide task list' : 'Show task list',
-                icon: Icon(_sidebarOpen ? Icons.menu_open : Icons.menu),
-                onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
-              ),
-              const SizedBox(width: 4),
+              if (_isPhone)
+                const SizedBox(width: 8)
+              else ...[
+                IconButton(
+                  tooltip: _sidebarOpen ? 'Hide task list' : 'Show task list',
+                  icon: Icon(_sidebarOpen ? Icons.menu_open : Icons.menu),
+                  onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
+                ),
+                const SizedBox(width: 4),
+              ],
               Expanded(
                 child: Text(
                   title,
@@ -555,7 +580,7 @@ class _CalendarPageState extends State<CalendarPage> {
               PopupMenuButton<_Span>(
                 tooltip: 'View',
                 initialValue: _span,
-                onSelected: (s) => setState(() => _span = s),
+                onSelected: (s) => setState(() => _spanChoice = s),
                 itemBuilder: (_) => [
                   for (final s in _Span.values)
                     PopupMenuItem(
@@ -715,6 +740,169 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
         ),
         FilledButton(onPressed: _save, child: const Text('Create')),
       ],
+    );
+  }
+}
+
+/// Phone stand-in for the sidebar: a strip of open tasks along the bottom.
+/// Long-press a task and drag it up onto the calendar to schedule it; tap
+/// it to edit. Tasks with nothing scheduled yet come first.
+class _TaskTray extends StatefulWidget {
+  const _TaskTray({
+    required this.store,
+    required this.now,
+    required this.onEditTask,
+  });
+  final PlannerStore store;
+  final DateTime now;
+  final void Function(Task task) onEditTask;
+
+  @override
+  State<_TaskTray> createState() => _TaskTrayState();
+}
+
+class _TaskTrayState extends State<_TaskTray> {
+  bool _open = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final store = widget.store;
+    final now = widget.now;
+    bool scheduled(Task t) =>
+        store.sessionsFor(t.id).any((s) => s.end.isAfter(now));
+    final tasks = [...store.openTasks]
+      ..sort((a, b) {
+        final byScheduled = (scheduled(a) ? 1 : 0) - (scheduled(b) ? 1 : 0);
+        return byScheduled != 0 ? byScheduled : compareTasks(a, b);
+      });
+    final unscheduled = tasks.where((t) => !scheduled(t)).length;
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Divider(height: 1),
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      unscheduled == 0
+                          ? 'Tasks · all scheduled'
+                          : 'Tasks · $unscheduled to schedule',
+                      style: theme.textTheme.labelLarge,
+                    ),
+                  ),
+                  if (_open)
+                    Text(
+                      'Hold & drag onto the calendar',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  Icon(_open ? Icons.expand_more : Icons.expand_less),
+                ],
+              ),
+            ),
+          ),
+          if (_open)
+            SizedBox(
+              height: 64,
+              child: tasks.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No open tasks',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    )
+                  : ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                      itemCount: tasks.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) {
+                        final t = tasks[i];
+                        final color = store.project(t.project).color;
+                        final chip = _TrayChip(
+                          task: t,
+                          color: color,
+                          scheduled: scheduled(t),
+                        );
+                        return LongPressDraggable<Task>(
+                          data: t,
+                          hapticFeedbackOnStart: true,
+                          dragAnchorStrategy: pointerDragAnchorStrategy,
+                          // Shown above the finger so you can see where it
+                          // lands.
+                          feedback: Transform.translate(
+                            offset: const Offset(-70, -64),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: Opacity(opacity: 0.9, child: chip),
+                            ),
+                          ),
+                          childWhenDragging: Opacity(opacity: 0.4, child: chip),
+                          child: GestureDetector(
+                            onTap: () => widget.onEditTask(t),
+                            child: chip,
+                          ),
+                        );
+                      },
+                    ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrayChip extends StatelessWidget {
+  const _TrayChip({
+    required this.task,
+    required this.color,
+    required this.scheduled,
+  });
+
+  final Task task;
+  final int color;
+  final bool scheduled;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 180, minWidth: 90),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(left: BorderSide(color: Color(color), width: 3)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            task.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelLarge,
+          ),
+          Text(
+            [
+              if (task.due != null) 'Due ${formatDue(task, DateTime.now())}',
+              if (scheduled) 'scheduled',
+            ].join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall,
+          ),
+        ],
+      ),
     );
   }
 }

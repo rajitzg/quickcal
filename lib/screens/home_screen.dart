@@ -9,6 +9,7 @@ import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_event.dart';
 import '../data/firestore_planner_store.dart';
 import '../data/planner_store.dart';
+import '../home_widget/agenda.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
@@ -35,7 +36,7 @@ enum _View {
   final IconData selectedIcon;
 }
 
-/// Screens at least this wide get the side rail and the Calendar planner.
+/// Screens at least this wide get the side rail and open on the Calendar.
 const _wideLayout = 700.0;
 
 class HomeScreen extends StatefulWidget {
@@ -73,8 +74,53 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool get _isDemo => widget.store != null;
 
+  // ---- Home screen widget (Android) ----
+  late final Listenable _data = Listenable.merge([_store, _calendar]);
+  Timer? _widgetUpdate;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AgendaWidget.supported) _data.addListener(_scheduleWidgetUpdate);
+  }
+
+  /// Data changes come in bursts (one per collection on launch), so wait
+  /// for them to settle before redrawing the widget.
+  void _scheduleWidgetUpdate() {
+    _widgetUpdate?.cancel();
+    _widgetUpdate = Timer(const Duration(seconds: 1), _publishWidget);
+  }
+
+  void _publishWidget() {
+    if (!_store.loaded) return;
+    final now = DateTime.now();
+    final today = dateOnly(now);
+    final rows = buildAgenda(
+      openTasks: [
+        for (final t in _store.openTasks)
+          if (!_store.project(t.project).hidden) t,
+      ],
+      sessions: _store.sessions,
+      events: _calendar.eventsBetween(
+        today,
+        DateTime(today.year, today.month, today.day + 8),
+      ),
+      projectColor: (p) => _store.project(p).color,
+      feedColor: (id) => _calendar.feed(id)?.color ?? 0xFF616161,
+      now: now,
+    );
+    unawaited(
+      AgendaWidget.publish(
+        rows,
+        now,
+      ).catchError((Object e) => debugPrint('Widget update failed: $e')),
+    );
+  }
+
   @override
   void dispose() {
+    _widgetUpdate?.cancel();
+    if (AgendaWidget.supported) _data.removeListener(_scheduleWidgetUpdate);
     if (widget.store == null) _store.dispose();
     if (widget.calendar == null) _calendar.dispose();
     super.dispose();
@@ -201,10 +247,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= _wideLayout;
-    final views = [
-      for (final v in _View.values)
-        if (wide || v != _View.calendar) v,
-    ];
+    // Phones list the agenda first and open on Today.
+    final views = wide
+        ? _View.values
+        : [..._View.values.where((v) => v != _View.calendar), _View.calendar];
     var view = _chosen ?? (wide ? _View.calendar : _View.today);
     if (!views.contains(view)) view = _View.today;
     void select(int i) => setState(() => _chosen = views[i]);
@@ -219,13 +265,17 @@ class _HomeScreenState extends State<HomeScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         return switch (view) {
-          _View.calendar => CalendarPage(
-            store: _store,
-            feeds: _calendar,
-            editTask: _edit,
-            onManageFeeds: _openCalendars,
-            menu: _menu(),
-            now: widget.now,
+          _View.calendar => SafeArea(
+            // No app bar above the planner, so keep clear of the status bar.
+            bottom: false,
+            child: CalendarPage(
+              store: _store,
+              feeds: _calendar,
+              editTask: _edit,
+              onManageFeeds: _openCalendars,
+              menu: _menu(),
+              now: widget.now,
+            ),
           ),
           _View.done => _buildDone(),
           _ => _buildOpen(view),
