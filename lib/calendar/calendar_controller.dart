@@ -10,6 +10,7 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'calendar_event.dart';
 import 'calendar_feeds.dart';
 import 'ics.dart';
+import '../google/google_calendars.dart';
 
 /// Keeps subscribed iCal feeds loaded and fresh.
 ///
@@ -63,7 +64,32 @@ class CalendarController extends ChangeNotifier {
         .firstOrNull;
   }
 
-  CalendarFeed? feed(String id) => _feeds.where((f) => f.id == id).firstOrNull;
+  CalendarFeed? feed(String id) =>
+      _feeds.where((f) => f.id == id).firstOrNull ??
+      _google?.feed(id) ??
+      _cachedGoogle?.feeds.where((f) => f.id == id).firstOrNull;
+
+  // ---- Google Calendar ----
+  GoogleCalendars? _google;
+
+  /// Google events saved by the app, used by background refreshes (which
+  /// can't sign in to Google themselves).
+  ({
+    List<CalendarFeed> feeds,
+    List<({String feedId, String calendarId, List<CalendarEvent> events})>
+    calendars,
+  })?
+  _cachedGoogle;
+
+  GoogleCalendars? get google => _google;
+
+  /// Shows events from the connected Google account alongside the iCal
+  /// feeds. An iCal link to a calendar that Google already shows is hidden,
+  /// so nothing appears twice.
+  void attachGoogle(GoogleCalendars google) {
+    _google = google;
+    google.addListener(_changed);
+  }
 
   void start() {
     if (!_tzReady) {
@@ -104,6 +130,11 @@ class CalendarController extends ChangeNotifier {
     _feeds = await _repo.fetch();
     for (final f in _feeds.where((f) => f.enabled)) {
       await _loadCache(f);
+    }
+    if (!kIsWeb) {
+      _cachedGoogle = await GoogleCalendars.readCache(
+        await GoogleCalendars.defaultCacheFile(),
+      );
     }
     await refresh();
   }
@@ -147,9 +178,27 @@ class CalendarController extends ChangeNotifier {
   List<CalendarEvent> eventsBetween(DateTime from, DateTime to) {
     final key = (from: from, to: to, version: _version);
     if (_memoKey == key) return _memo;
+    final google = _google?.eventsBetween(from, to) ?? const [];
+    final cached = _cachedGoogle?.calendars ?? const [];
+    final viaGoogle = {
+      for (final g in [...google, ...cached]) g.calendarId,
+    };
     final out = mergeFeeds([
+      ...google,
+      ...[
+        for (final c in cached)
+          (
+            feedId: c.feedId,
+            calendarId: c.calendarId,
+            events: [
+              for (final e in c.events)
+                if (e.overlaps(from, to)) e,
+            ],
+          ),
+      ],
       for (final f in _feeds)
-        if (_parsed[f.id] case final events? when f.enabled)
+        if (_parsed[f.id] case final events?
+            when f.enabled && !viaGoogle.contains(f.calendarId))
           (
             feedId: f.id,
             calendarId: f.calendarId,
@@ -225,6 +274,7 @@ class CalendarController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _google?.removeListener(_changed);
     _feedSub?.cancel();
     _timer?.cancel();
     _client.close();

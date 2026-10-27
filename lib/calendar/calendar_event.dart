@@ -15,6 +15,8 @@ class CalendarEvent {
     this.allDay = false,
     this.location = '',
     this.description = '',
+    this.remoteId,
+    this.editable = false,
   });
 
   /// Unique per occurrence: the event UID plus its start time.
@@ -34,8 +36,62 @@ class CalendarEvent {
   final String location;
   final String description;
 
+  /// For events from a connected Google account: the occurrence's Google
+  /// event id, used to move or delete it.
+  final String? remoteId;
+
+  /// Can be moved, resized and deleted from here (Google calendars you can
+  /// edit). iCal feeds are always read-only.
+  final bool editable;
+
   bool overlaps(DateTime from, DateTime to) =>
       start.isBefore(to) && end.isAfter(from);
+
+  CalendarEvent copyWith({String? title, DateTime? start, DateTime? end}) =>
+      CalendarEvent(
+        id: id,
+        feedId: feedId,
+        uid: uid,
+        organizer: organizer,
+        title: title ?? this.title,
+        start: start ?? this.start,
+        end: end ?? this.end,
+        allDay: allDay,
+        location: location,
+        description: description,
+        remoteId: remoteId,
+        editable: editable,
+      );
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'feedId': feedId,
+    'uid': uid,
+    'organizer': organizer,
+    'title': title,
+    'start': start.toIso8601String(),
+    'end': end.toIso8601String(),
+    'allDay': allDay,
+    'location': location,
+    'description': description,
+    'remoteId': remoteId,
+    'editable': editable,
+  };
+
+  factory CalendarEvent.fromJson(Map<String, dynamic> j) => CalendarEvent(
+    id: j['id'] as String,
+    feedId: j['feedId'] as String,
+    uid: j['uid'] as String? ?? '',
+    organizer: j['organizer'] as String?,
+    title: j['title'] as String? ?? '',
+    start: DateTime.parse(j['start'] as String),
+    end: DateTime.parse(j['end'] as String),
+    allDay: j['allDay'] as bool? ?? false,
+    location: j['location'] as String? ?? '',
+    description: j['description'] as String? ?? '',
+    remoteId: j['remoteId'] as String?,
+    editable: j['editable'] as bool? ?? false,
+  );
 }
 
 /// Safety cap on occurrences generated per series.

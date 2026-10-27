@@ -496,6 +496,29 @@ class _CalendarList extends StatelessWidget {
             onVisible: (v) => store.saveProject(p.copyWith(hidden: !v)),
             onEdit: () => _editProject(context, p),
           ),
+        if (feeds?.google case final google? when google.connected) ...[
+          _sectionHeader(
+            theme,
+            'Google',
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              tooltip: 'Google Calendar settings',
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: onManageFeeds,
+            ),
+          ),
+          for (final c in google.calendars)
+            _CalendarRow(
+              color: google.settingFor(c).color,
+              name: c.name,
+              visible: google.isShown(c),
+              onVisible: (v) => google.updateSetting(
+                google.settingFor(c).copyWith(enabled: v),
+              ),
+              onEdit: onManageFeeds,
+            ),
+        ],
         _sectionHeader(
           theme,
           'Subscribed',

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_feeds.dart';
+import '../google/google_calendars.dart';
 import '../theme/palette.dart';
 
 /// Add, recolor, disable and remove iCal subscriptions.
@@ -62,7 +63,10 @@ class CalendarsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: Listenable.merge([
+        controller,
+        ?controller.google?.connection,
+      ]),
       builder: (context, _) {
         final feeds = controller.feeds;
         return Scaffold(
@@ -93,6 +97,16 @@ class CalendarsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.only(bottom: 88),
             children: [
+              if (controller.google case final google?)
+                _GoogleSection(google: google),
+              if (controller.google != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text(
+                    'iCal links',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
               for (final f in feeds) _feedTile(context, f),
               if (feeds.isEmpty)
                 const Padding(
@@ -309,6 +323,97 @@ class _HowTo extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Connect a Google account and choose which of its calendars to show.
+class _GoogleSection extends StatelessWidget {
+  const _GoogleSection({required this.google});
+  final GoogleCalendars google;
+
+  Future<void> _connect(BuildContext context) async {
+    try {
+      await google.connection.connect();
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not connect Google: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final connection = google.connection;
+    final error = google.error;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('Google Calendar', style: theme.textTheme.titleSmall),
+        ),
+        if (!connection.configured)
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Not set up yet'),
+            subtitle: Text(
+              'Google sign-in needs a one-time setup: see "Google Calendar '
+              'setup" in README.md. Until then, add Google calendars with '
+              'their iCal links below.',
+            ),
+          )
+        else if (!connection.connected)
+          ListTile(
+            leading: const Icon(Icons.event_available),
+            title: const Text('Connect your Google account'),
+            subtitle: const Text(
+              'Show your Google calendars, and add or move their events '
+              'from here.',
+            ),
+            trailing: FilledButton(
+              onPressed: () => _connect(context),
+              child: const Text('Connect'),
+            ),
+          )
+        else ...[
+          ListTile(
+            leading: const Icon(Icons.account_circle_outlined),
+            title: Text(connection.email!),
+            subtitle: const Text(
+              'Changes sync both ways. Calendars shown here replace any '
+              'iCal links to the same calendars.',
+            ),
+            trailing: TextButton(
+              onPressed: connection.disconnect,
+              child: const Text('Disconnect'),
+            ),
+          ),
+          for (final c in google.calendars)
+            SwitchListTile(
+              secondary: CircleAvatar(
+                radius: 10,
+                backgroundColor: Color(google.settingFor(c).color),
+              ),
+              title: Text(c.name),
+              subtitle: Text(c.canWrite ? 'Can edit' : 'View only'),
+              value: google.isShown(c),
+              onChanged: (v) => google.updateSetting(
+                google.settingFor(c).copyWith(enabled: v),
+              ),
+            ),
+        ],
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Text(
+              'Google: $error',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -6,7 +6,11 @@ import 'package:intl/intl.dart';
 
 import 'calendar/calendar_controller.dart';
 import 'calendar/calendar_feeds.dart';
+import 'calendar/calendar_event.dart';
 import 'data/memory_planner_store.dart';
+import 'google/fake_google.dart';
+import 'google/google_calendar_client.dart';
+import 'google/google_calendars.dart';
 import 'models/project_calendar.dart';
 import 'models/task.dart';
 import 'models/work_session.dart';
@@ -31,7 +35,50 @@ class _DemoAppState extends State<DemoApp> {
   );
   late final MemoryPlannerStore _store = _sampleStore();
   late final CalendarController _calendar = CalendarController('demo')
-    ..showDemo(_sampleFeeds());
+    ..showDemo(_sampleFeeds())
+    ..attachGoogle(_sampleGoogle()..start());
+
+  /// A pretend connected Google account with two calendars.
+  GoogleCalendars _sampleGoogle() {
+    CalendarEvent event(
+      String id,
+      String title,
+      int day,
+      double from,
+      double to,
+    ) => CalendarEvent(
+      id: id,
+      feedId: '',
+      title: title,
+      start: _at(day, from),
+      end: _at(day, to),
+      remoteId: id,
+    );
+    final fake = FakeGoogleCalendarClient(
+      const [
+        GoogleCalendarInfo(
+          id: 'demo@gmail.com',
+          name: 'Personal (Google)',
+          color: 0xFF0B8043,
+          canWrite: true,
+          primary: true,
+        ),
+        GoogleCalendarInfo(
+          id: 'en.usa#holiday@group.v.calendar.google.com',
+          name: 'Holidays',
+          color: 0xFF795548,
+          canWrite: false,
+        ),
+      ],
+      {
+        'demo@gmail.com': [
+          event('g1', 'Dinner with Sam', 4, 18.5, 20),
+          event('g2', 'Gym', 6, 10, 11.5),
+        ],
+      },
+    );
+    return GoogleCalendars(FakeGoogleConnection(fake), MemoryGoogleSettings());
+  }
 
   /// [weekday] 0 = this Sunday … 6 = Saturday; [hour] may be fractional.
   DateTime _at(int weekday, double hour) => DateTime(

@@ -9,6 +9,8 @@ import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_event.dart';
 import '../data/firestore_planner_store.dart';
 import '../data/planner_store.dart';
+import '../google/google_calendars.dart';
+import '../google/google_connection.dart';
 import '../home_widget/agenda.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
@@ -68,6 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final CalendarController _calendar =
       widget.calendar ?? (CalendarController(widget.uid)..start());
 
+  /// The Google Calendar connection (the real app; the demo brings its own).
+  GoogleCalendars? _google;
+
   /// Null until the user picks a tab: then wide screens open on the
   /// Calendar planner and phones on Today.
   _View? _chosen;
@@ -81,6 +86,17 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.calendar == null) {
+      _google = GoogleCalendars(
+        SignInGoogleConnection(),
+        FirestoreGoogleSettings(widget.uid),
+        // Saved for the home screen widget's background refresh.
+        cacheFile: AgendaWidget.supported
+            ? GoogleCalendars.defaultCacheFile
+            : null,
+      )..start();
+      _calendar.attachGoogle(_google!);
+    }
     if (AgendaWidget.supported) _data.addListener(_scheduleWidgetUpdate);
   }
 
@@ -123,6 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (AgendaWidget.supported) _data.removeListener(_scheduleWidgetUpdate);
     if (widget.store == null) _store.dispose();
     if (widget.calendar == null) _calendar.dispose();
+    _google?.connection.dispose();
+    _google?.dispose();
     super.dispose();
   }
 

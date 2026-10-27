@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_event.dart';
 import '../data/planner_store.dart';
+import '../google/google_calendar_client.dart';
+import '../google/google_calendars.dart';
 import '../logic/calendar_layout.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
@@ -230,12 +232,35 @@ class _CalendarPageState extends State<CalendarPage> {
     _run(store.saveSession(session));
   }
 
+  GoogleCalendars? get _google => widget.feeds?.google;
+
+  /// Where the last block drawn went: null for a project task, otherwise a
+  /// Google calendar id. The dialog starts there next time.
+  String? _lastDestination;
+
   Future<void> _createFromSelection(DateTime start, DateTime end) async {
+    final google = _google;
+    final calendars = google != null && google.connected
+        ? google.writableCalendars
+        : const <GoogleCalendarInfo>[];
     final choice = await showDialog<_NewSessionChoice>(
       context: context,
-      builder: (_) => _NewSessionDialog(store: store, start: start, end: end),
+      builder: (_) => _NewSessionDialog(
+        store: store,
+        start: start,
+        end: end,
+        googleCalendars: calendars,
+        destination: calendars.any((c) => c.id == _lastDestination)
+            ? _lastDestination
+            : null,
+      ),
     );
     if (choice == null) return;
+    _lastDestination = choice.googleCalendarId;
+    if (choice.googleCalendarId case final calendarId?) {
+      _run(google!.create(calendarId, choice.title, start, end));
+      return;
+    }
     var task = choice.existing;
     if (task == null) {
       task = Task(
@@ -306,6 +331,10 @@ class _CalendarPageState extends State<CalendarPage> {
     final task = session != null
         ? store.taskById(session.taskId)
         : _deadlineTask(item.id);
+    final googleEvent = switch (_event(item.id)) {
+      final e? when e.editable => e,
+      _ => null,
+    };
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final choice = await showMenu<String>(
@@ -330,6 +359,13 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'delete', child: Text('Delete session')),
+        ],
+        if (googleEvent != null) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: 'delete-event',
+            child: Text('Delete from Google Calendar'),
+          ),
         ],
       ],
     );
@@ -356,6 +392,8 @@ class _CalendarPageState extends State<CalendarPage> {
         );
       case 'delete':
         _deleteSession(session!);
+      case 'delete-event':
+        _deleteGoogleEvent(googleEvent!);
     }
   }
 
@@ -399,6 +437,8 @@ class _CalendarPageState extends State<CalendarPage> {
         title: e.title,
         color: widget.feeds?.feed(e.feedId)?.color ?? 0xFF616161,
         allDay: e.allDay,
+        // Events in Google calendars you can edit move like sessions.
+        editable: e.editable && !e.allDay,
       );
       (e.allDay ? allDay : timed).add(item);
     }
@@ -523,6 +563,10 @@ class _CalendarPageState extends State<CalendarPage> {
                                   ),
                                 );
                               }
+                              final e = _event(item.id);
+                              if (e != null && e.editable) {
+                                _run(_google!.move(e, start, end));
+                              }
                             },
                             onCreate: _createFromSelection,
                             onDragOutside: (item, pos) => setState(
@@ -558,8 +602,29 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _deleteSelected() {
-    final s = _selectedId == null ? null : _session(_selectedId!);
-    if (s != null) _deleteSession(s);
+    final id = _selectedId;
+    if (id == null) return;
+    final s = _session(id);
+    if (s != null) return _deleteSession(s);
+    final e = _event(id);
+    if (e != null && e.editable) _deleteGoogleEvent(e);
+  }
+
+  void _deleteGoogleEvent(CalendarEvent e) {
+    final google = _google!;
+    final calendarId = e.feedId.substring(GoogleCalendars.feedPrefix.length);
+    setState(() => _selectedId = null);
+    _run(google.delete(e));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Deleted "${e.title}" from Google Calendar'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () =>
+              _run(google.create(calendarId, e.title, e.start, e.end)),
+        ),
+      ),
+    );
   }
 
   Widget _toolbar(BuildContext context, List<DateTime> days) {
@@ -665,10 +730,19 @@ class _CalendarPageState extends State<CalendarPage> {
 }
 
 class _NewSessionChoice {
-  const _NewSessionChoice({this.existing, this.title = '', this.project = ''});
+  const _NewSessionChoice({
+    this.existing,
+    this.title = '',
+    this.project = '',
+    this.googleCalendarId,
+  });
   final Task? existing;
   final String title;
   final String project;
+
+  /// Set when the block should be an event in this Google calendar instead
+  /// of a work session for a task.
+  final String? googleCalendarId;
 }
 
 /// Asks what a block drawn on empty calendar space is for: an existing task
@@ -678,11 +752,19 @@ class _NewSessionDialog extends StatefulWidget {
     required this.store,
     required this.start,
     required this.end,
+    this.googleCalendars = const [],
+    this.destination,
   });
 
   final PlannerStore store;
   final DateTime start;
   final DateTime end;
+
+  /// Google calendars that can take a new event (empty: not connected).
+  final List<GoogleCalendarInfo> googleCalendars;
+
+  /// Preselected Google calendar id; null for a task.
+  final String? destination;
 
   @override
   State<_NewSessionDialog> createState() => _NewSessionDialogState();
@@ -692,9 +774,16 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
   Task? _existing;
   String _title = '';
   String _project = '';
+  late String? _calendarId = widget.destination;
 
   void _save() {
-    if (_existing != null) {
+    if (_calendarId != null) {
+      if (_title.trim().isEmpty) return;
+      Navigator.pop(
+        context,
+        _NewSessionChoice(title: _title.trim(), googleCalendarId: _calendarId),
+      );
+    } else if (_existing != null) {
       Navigator.pop(context, _NewSessionChoice(existing: _existing));
     } else if (_title.trim().isNotEmpty) {
       Navigator.pop(
@@ -708,8 +797,9 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
   Widget build(BuildContext context) {
     final time = DateFormat.jm();
     final tasks = widget.store.openTasks;
+    final toGoogle = _calendarId != null;
     return AlertDialog(
-      title: const Text('New session'),
+      title: Text(toGoogle ? 'New event' : 'New session'),
       content: SizedBox(
         width: 400,
         child: Column(
@@ -720,59 +810,103 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
               '${DateFormat.MMMEd().format(widget.start)}, '
               '${time.format(widget.start)} – ${time.format(widget.end)}',
             ),
-            const SizedBox(height: 12),
-            Autocomplete<Task>(
-              displayStringForOption: (t) => t.title,
-              optionsBuilder: (value) {
-                final q = value.text.trim().toLowerCase();
-                if (q.isEmpty) return const [];
-                return tasks.where((t) => t.title.toLowerCase().contains(q));
-              },
-              onSelected: (t) => setState(() => _existing = t),
-              fieldViewBuilder: (context, controller, focusNode, onSubmit) =>
-                  TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Task',
-                      hintText: 'Type a new task or pick an existing one',
-                    ),
-                    onChanged: (v) => setState(() {
-                      _title = v;
-                      if (_existing?.title != v) _existing = null;
-                    }),
-                    onSubmitted: (_) => _save(),
+            if (widget.googleCalendars.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String?>(
+                initialValue: _calendarId,
+                // Full width, so long calendar names can be shortened.
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Add to'),
+                items: [
+                  const DropdownMenuItem(
+                    value: null,
+                    child: Text('A task in a project'),
                   ),
-            ),
+                  for (final c in widget.googleCalendars)
+                    DropdownMenuItem(
+                      value: c.id,
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 6,
+                            backgroundColor: Color(c.color),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Google · ${c.name}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _calendarId = v),
+              ),
+            ],
             const SizedBox(height: 12),
-            if (_existing != null)
-              Text(
-                'Adds another session to this task'
-                '${_existing!.project.isEmpty ? '' : ' in ${_existing!.project}'}.',
-                style: Theme.of(context).textTheme.bodySmall,
+            if (toGoogle)
+              TextField(
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Event title'),
+                onChanged: (v) => _title = v,
+                onSubmitted: (_) => _save(),
               )
-            else
-              Autocomplete<String>(
+            else ...[
+              Autocomplete<Task>(
+                displayStringForOption: (t) => t.title,
                 optionsBuilder: (value) {
-                  final q = value.text.toLowerCase();
-                  return widget.store.projectNameSuggestions.where(
-                    (p) => p.toLowerCase().contains(q),
-                  );
+                  final q = value.text.trim().toLowerCase();
+                  if (q.isEmpty) return const [];
+                  return tasks.where((t) => t.title.toLowerCase().contains(q));
                 },
-                onSelected: (p) => _project = p,
+                onSelected: (t) => setState(() => _existing = t),
                 fieldViewBuilder: (context, controller, focusNode, onSubmit) =>
                     TextField(
                       controller: controller,
                       focusNode: focusNode,
+                      autofocus: true,
                       decoration: const InputDecoration(
-                        labelText: 'Project',
-                        hintText: 'Inbox',
+                        labelText: 'Task',
+                        hintText: 'Type a new task or pick an existing one',
                       ),
-                      onChanged: (v) => _project = v,
+                      onChanged: (v) => setState(() {
+                        _title = v;
+                        if (_existing?.title != v) _existing = null;
+                      }),
                       onSubmitted: (_) => _save(),
                     ),
               ),
+              const SizedBox(height: 12),
+              if (_existing != null)
+                Text(
+                  'Adds another session to this task'
+                  '${_existing!.project.isEmpty ? '' : ' in ${_existing!.project}'}.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                )
+              else
+                Autocomplete<String>(
+                  optionsBuilder: (value) {
+                    final q = value.text.toLowerCase();
+                    return widget.store.projectNameSuggestions.where(
+                      (p) => p.toLowerCase().contains(q),
+                    );
+                  },
+                  onSelected: (p) => _project = p,
+                  fieldViewBuilder:
+                      (context, controller, focusNode, onSubmit) => TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: const InputDecoration(
+                          labelText: 'Project',
+                          hintText: 'Inbox',
+                        ),
+                        onChanged: (v) => _project = v,
+                        onSubmitted: (_) => _save(),
+                      ),
+                ),
+            ],
           ],
         ),
       ),

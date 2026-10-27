@@ -118,6 +118,46 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 ### Try it without Firebase
 `flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.
 
+## Google Calendar
+Connect a Google account to see its calendars without iCal links, and to change them from Taskflow:
+- **Connecting:** under **Calendars…** → **Google Calendar** → **Connect**, then tick which calendars to show. Your choices sync between devices; you connect the account once on each device.
+- **New blocks:** a block drawn on empty space (or long-pressed on the phone) can be **a task in a project** or **an event in one of your Google calendars**. Pick it in the dialog's **Add to** field. The dialog remembers your last choice.
+- **Editing:** you can drag, resize and delete events in Google calendars you're allowed to edit (right-click → Delete, or select and press Delete). Changes go straight to Google, and are undone if Google refuses them. View-only calendars, like holidays, stay fixed.
+- **Updates:** changes made in Google Calendar itself appear within about 5 minutes while the app is open.
+- **No duplicates:** an iCal link to a calendar you've connected through Google is hidden, so nothing shows twice. You can delete the link.
+- **Home screen widget:** includes Google events. Its background refresh uses the events the app last loaded, since it can't sign in to Google on its own.
+
+### Google Calendar setup (one time)
+Google needs to know the app before it can sign in. Use the Google Cloud project that Firebase created for you; it has the same name.
+
+1. **Turn on the API.** Open [console.cloud.google.com](https://console.cloud.google.com) and select the project. Go to **APIs & Services → Library**, search for **Google Calendar API**, and click **Enable**.
+2. **Set up the consent screen.** Go to **Google Auth Platform** (or **OAuth consent screen**) and choose **External**. Fill in an app name and your email.
+   - Under **Data access**, add the scope `.../auth/calendar`.
+   - Under **Audience**, add your Gmail address as a test user.
+   - While the app is in **Testing**, Google signs you out every 7 days. Click **Publish app** to stop that. Google will show an "unverified app" warning when you sign in; that's expected for a personal app, so continue past it.
+3. **Create the client IDs.** Under **Clients** (or **Credentials → Create credentials → OAuth client ID**):
+   - **Web application:** if Firebase Authentication → Sign-in method → **Google** is enabled, this already exists ("Web client (auto created by Google Service)"). Put its client ID in `googleWebClientId` in `lib/google/google_setup.dart`. Android uses it.
+   - **Android:** package name `com.rzghosh.taskflow`, plus the SHA-1 fingerprint of your signing key. Get it with:
+     ```sh
+     keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
+     ```
+     Flutter signs both debug and release builds with this key unless you set up your own. Nothing to copy into the app.
+   - **iOS** (used by macOS): bundle ID `com.rzghosh.taskflow`. Put its client ID in `googleAppleClientId` in `lib/google/google_setup.dart`, and add its **iOS URL scheme** (the client ID reversed, `com.googleusercontent.apps.…`) to `macos/Runner/Info.plist`, inside the top-level `<dict>`:
+     ```xml
+     <key>CFBundleURLTypes</key>
+     <array>
+       <dict>
+         <key>CFBundleURLSchemes</key>
+         <array>
+           <string>com.googleusercontent.apps.YOUR-ID-HERE</string>
+         </array>
+       </dict>
+     </array>
+     ```
+4. **Rebuild** the app on each device and connect from **Calendars…**.
+
+The keychain entitlement that Google sign-in needs on macOS is already in `macos/Runner/*.entitlements`.
+
 ## Adding calendars
 Menu (⋮) → **Calendars…** → **Add calendar**, then paste the calendar's iCal link. The screen explains where to find the link for Google, iCloud, Outlook and school portals. Calendar subscriptions sync through Firestore, so you add each one once and it appears on both devices.
 
@@ -163,6 +203,10 @@ lib/
   widgets/task_panel.dart    Planner sidebar: draggable tasks + calendar list
   screens/calendar_page.dart The planner screen
   demo_main.dart             Sample-data entry point
+  google/google_setup.dart   OAuth client IDs (fill in once)
+  google/google_connection.dart  Google sign-in (per device)
+  google/google_calendars.dart   Google calendars: loading, create/move/delete (tested with a fake)
+  google/google_calendar_client.dart  The Google Calendar API calls
   home_widget/agenda.dart    Rows for the Android home screen widget (unit-tested)
   home_widget/background.dart  30-minute background refresh of the widget
 android/app/src/main/kotlin/…/AgendaWidget*.kt  The native widget that draws those rows
