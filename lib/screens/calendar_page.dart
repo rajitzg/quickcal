@@ -61,6 +61,15 @@ class _CalendarPageState extends State<CalendarPage> {
   final _focusNode = FocusNode(debugLabel: 'calendar');
   late DateTime _focusDay = dateOnly(_now);
 
+  /// First visible day once the view has been scrolled by days (so a week
+  /// can start on any day). Null: the range around [_focusDay], e.g. the
+  /// Sunday-to-Saturday week containing it.
+  DateTime? _start;
+
+  /// Swipes move by days in every view except the work week, whose days
+  /// aren't consecutive.
+  bool get _snapsToDays => _span != _Span.workWeek;
+
   /// The view the user picked; until then, a week on desktop and three
   /// days on a phone.
   _Span? _spanChoice;
@@ -104,14 +113,19 @@ class _CalendarPageState extends State<CalendarPage> {
 
   /// The days of the page [offset] pages away from the current one.
   List<DateTime> _daysAround(int offset) {
-    final f0 = _focusDay;
-    final f = DateTime(f0.year, f0.month, f0.day + offset * _step);
-    final start = switch (_span) {
-      // Weeks start on Sunday; the work week on Monday.
-      _Span.week => DateTime(f.year, f.month, f.day - f.weekday % 7),
-      _Span.workWeek => DateTime(f.year, f.month, f.day - (f.weekday - 1)),
-      _ => f,
-    };
+    final DateTime start;
+    if (_start case final s? when _snapsToDays) {
+      start = DateTime(s.year, s.month, s.day + offset * _step);
+    } else {
+      final f0 = _focusDay;
+      final f = DateTime(f0.year, f0.month, f0.day + offset * _step);
+      start = switch (_span) {
+        // Weeks start on Sunday; the work week on Monday.
+        _Span.week => DateTime(f.year, f.month, f.day - f.weekday % 7),
+        _Span.workWeek => DateTime(f.year, f.month, f.day - (f.weekday - 1)),
+        _ => f,
+      };
+    }
     return [
       for (var i = 0; i < _span.days; i++)
         DateTime(start.year, start.month, start.day + i),
@@ -120,12 +134,36 @@ class _CalendarPageState extends State<CalendarPage> {
 
   /// Switches pages immediately (after a swipe has finished animating).
   void _go(int direction) {
+    if (_start != null && _snapsToDays) return _scrollDays(direction * _step);
     setState(() {
       _focusDay = DateTime(
         _focusDay.year,
         _focusDay.month,
         _focusDay.day + direction * _step,
       );
+    });
+    store.ensureSessionsFrom(_daysAround(-1).first);
+  }
+
+  /// Moves the view by [days] days (after a swipe has finished animating).
+  void _scrollDays(int days) {
+    final first = _days.first;
+    setState(() {
+      _start = DateTime(first.year, first.month, first.day + days);
+      _focusDay = _start!;
+    });
+    store.ensureSessionsFrom(_daysAround(-1).first);
+  }
+
+  /// Switches view, keeping today in view if it was, otherwise the first
+  /// visible day.
+  void _setSpan(_Span span) {
+    final today = dateOnly(_now);
+    final days = _days;
+    setState(() {
+      _focusDay = days.contains(today) ? today : days.first;
+      _start = null;
+      _spanChoice = span;
     });
     store.ensureSessionsFrom(_daysAround(-1).first);
   }
@@ -141,7 +179,10 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _today() {
-    setState(() => _focusDay = dateOnly(_now));
+    setState(() {
+      _focusDay = dateOnly(_now);
+      _start = null;
+    });
     store.ensureSessionsFrom(_daysAround(-1).first);
   }
 
@@ -406,7 +447,7 @@ class _CalendarPageState extends State<CalendarPage> {
               SingleActivator(
                 LogicalKeyboardKey(s.key.toLowerCase().codeUnitAt(0)),
               ): () =>
-                  setState(() => _spanChoice = s),
+                  _setSpan(s),
             const SingleActivator(LogicalKeyboardKey.escape): () =>
                 setState(() => _selectedId = null),
             const SingleActivator(LogicalKeyboardKey.delete): _deleteSelected,
@@ -471,6 +512,8 @@ class _CalendarPageState extends State<CalendarPage> {
                             onOpen: _open,
                             onContextMenu: _contextMenu,
                             onSwipe: _go,
+                            snapToDays: _snapsToDays,
+                            onScrollDays: _scrollDays,
                             onChanged: (item, start, end) {
                               final s = _session(item.id);
                               if (s != null) {
@@ -580,7 +623,7 @@ class _CalendarPageState extends State<CalendarPage> {
               PopupMenuButton<_Span>(
                 tooltip: 'View',
                 initialValue: _span,
-                onSelected: (s) => setState(() => _spanChoice = s),
+                onSelected: _setSpan,
                 itemBuilder: (_) => [
                   for (final s in _Span.values)
                     PopupMenuItem(

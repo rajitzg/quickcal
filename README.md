@@ -53,7 +53,7 @@ Create an account on one device, then sign in with the same email on the other.
 
 ## On Android
 **Calendar tab:** the same planner as on the desktop, made for fingers. It opens on 3 days by default; switch to 1 day or the week in the toolbar.
-- **Change days:** swipe sideways. The calendar follows your finger and snaps.
+- **Change days:** swipe sideways. The calendar follows your finger and snaps to the nearest day, so a short swipe moves one day.
 - **Move a block:** long-press it, then drag. A plain drag scrolls.
 - **Resize a block:** tap it to select it, then drag the handles at its top and bottom edges.
 - **Block actions:** tap a selected block for Edit task, Mark done, Add another session and Delete session.
@@ -109,7 +109,9 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 
 **Scrolling:** two-finger scrolling moves up and down through the day.
 
-**Changing weeks:** swipe sideways with two fingers, or use a horizontal scroll wheel or Shift+wheel. The whole calendar follows your fingers, with the previous or next week sliding in, and snaps to the nearest week when you let go. A quick flick is enough. The ‹ › buttons and the arrow keys slide the same way.
+**Scrolling sideways:** swipe with two fingers, or use a horizontal scroll wheel or Shift+wheel. The calendar follows your fingers and snaps to the nearest **day** when you let go, so you can move a week view along one day at a time. A longer swipe or a flick moves several days, up to a week. The work week view moves a week at a time instead, since its days aren't consecutive.
+
+**Jumping a whole page:** the ‹ › buttons and the arrow keys move a full week (or 3 days, or 1). **Today** brings back the normal Sunday-to-Saturday week.
 
 ### Try it without Firebase
 `flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.

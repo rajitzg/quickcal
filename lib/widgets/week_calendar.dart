@@ -76,6 +76,8 @@ class WeekCalendar extends StatefulWidget {
     this.onOpen,
     this.onContextMenu,
     this.onSwipe,
+    this.snapToDays = false,
+    this.onScrollDays,
     this.onDragOutside,
     this.onDropOutside,
     this.hourHeight = 48,
@@ -111,6 +113,13 @@ class WeekCalendar extends StatefulWidget {
 
   /// -1 for previous, +1 for next.
   final void Function(int direction)? onSwipe;
+
+  /// Swipes and wheel scrolling snap to whole days (up to a page at a
+  /// time) instead of whole pages; [onScrollDays] reports how many days
+  /// (negative: earlier). The previous/next pages must then be the days
+  /// right before and after [days].
+  final bool snapToDays;
+  final void Function(int days)? onScrollDays;
 
   /// While a block is dragged outside the calendar: the pointer position,
   /// then null when it comes back or the drag ends.
@@ -553,21 +562,36 @@ class WeekCalendarState extends State<WeekCalendar>
 
   double _clampShift(double v) => v.clamp(-_pageWidth, _pageWidth).toDouble();
 
-  /// Snaps to the nearest page (or the one flung towards).
+  /// The slide in progress: where it's heading, how far that moves (in
+  /// days, or in pages), and which callback reports it.
+  ({double target, int steps, bool byDay})? _slide;
+
+  /// Snaps to the nearest day ([WeekCalendar.snapToDays]) or page, taking a
+  /// fling into account.
   void _settle(double velocity) {
     final w = _pageWidth;
+    if (widget.snapToDays) {
+      final dayWidth = w / widget.days.length;
+      // Carry on a little in the direction of a fling, then snap.
+      final projected = _shift + velocity * 0.12;
+      final days = (projected / dayWidth).round().clamp(
+        -widget.days.length,
+        widget.days.length,
+      );
+      _slideTo(days * dayWidth, steps: -days, byDay: true);
+      return;
+    }
     var dir = 0;
     if (_shift > w * 0.2 || velocity > 600) dir = -1;
     if (_shift < -w * 0.2 || velocity < -600) dir = 1;
     // Only page in the direction the grid has actually been pulled.
     if (dir != 0 && _shift != 0 && (_shift > 0) != (dir < 0)) dir = 0;
-    _animateTo(dir);
+    _slideTo(-dir * w, steps: dir, byDay: false);
   }
 
-  /// Animates to the previous (-1) or next (+1) page, or back to the
-  /// current one (0), then reports the change through [WeekCalendar.onSwipe].
-  void _animateTo(int dir) {
-    final target = -dir * _pageWidth;
+  /// Animates the shift to [target], then reports the move.
+  void _slideTo(double target, {required int steps, required bool byDay}) {
+    _slide = (target: target, steps: steps, byDay: byDay);
     _pageAnim.value = _shift;
     _pageAnim
         .animateTo(
@@ -576,12 +600,24 @@ class WeekCalendarState extends State<WeekCalendar>
           curve: Curves.easeOutCubic,
         )
         .whenCompleteOrCancel(() {
-          if (!mounted || dir == 0 || _shift != target) return;
-          // The parent shows the new page in the same frame as the shift
-          // resets, so the swap is invisible.
-          setState(() => _shift = 0);
-          widget.onSwipe?.call(dir);
+          if (mounted && _slide?.target == target && _shift == target) {
+            _finishSlide();
+          }
         });
+  }
+
+  void _finishSlide() {
+    final slide = _slide!;
+    _slide = null;
+    // The parent shows the new days in the same frame as the shift resets,
+    // so the swap is invisible.
+    setState(() => _shift = 0);
+    if (slide.steps == 0) return;
+    if (slide.byDay) {
+      widget.onScrollDays?.call(slide.steps);
+    } else {
+      widget.onSwipe?.call(slide.steps);
+    }
   }
 
   /// Goes to the previous (-1) or next (+1) page with a slide animation,
@@ -591,12 +627,13 @@ class WeekCalendarState extends State<WeekCalendar>
       widget.onSwipe?.call(dir);
       return;
     }
-    // A second press while sliding finishes the first page immediately.
     if (_pageAnim.isAnimating) {
+      // A second press finishes the slide in progress at once, so quick
+      // presses each count.
       _pageAnim.stop();
-      return page(dir);
+      if (_slide != null) _finishSlide();
     }
-    _animateTo(dir);
+    _slideTo(-dir * _pageWidth, steps: dir, byDay: false);
   }
 
   Widget _buildGrid(ThemeData theme) {
