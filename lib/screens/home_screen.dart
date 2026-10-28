@@ -13,9 +13,11 @@ import '../google/google_calendars.dart';
 import '../google/google_connection.dart';
 import '../home_widget/agenda.dart';
 import '../logic/task_views.dart';
+import '../models/project_calendar.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
+import '../widgets/project_dialog.dart';
 import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
 import 'calendar_page.dart';
@@ -207,13 +209,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _addTask(_View view) {
+  void _addTask(_View view, {String project = ''}) {
     final now = DateTime.now();
     // New tasks default to today when added from the Today tab.
     _edit(
       Task(
         id: _store.newTaskId(),
         title: '',
+        project: project,
         due: view == _View.today ? dateOnly(now) : null,
         createdAt: now,
       ),
@@ -314,7 +317,18 @@ class _HomeScreenState extends State<HomeScreen> {
           // The planner has its own toolbar.
           appBar: view == _View.calendar
               ? null
-              : AppBar(title: Text(view.label), actions: [_menu()]),
+              : AppBar(
+                  title: Text(view.label),
+                  actions: [
+                    if (view == _View.projects)
+                      IconButton(
+                        tooltip: 'New project',
+                        icon: const Icon(Icons.create_new_folder_outlined),
+                        onPressed: () => newProject(context, _store),
+                      ),
+                    _menu(),
+                  ],
+                ),
           floatingActionButton: view == _View.calendar
               ? null
               : FloatingActionButton(
@@ -386,9 +400,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Tomorrow · ${DateFormat.MMMd().format(d)}'
             : DateFormat('EEEE · MMM d').format(d),
       ),
-      _ => projectSections(open),
+      _ => projectSections(
+        open,
+        projects: [for (final p in _store.allProjects) p.name],
+      ),
     };
-    if (sections.every((s) => s.isEmpty) && view != _View.upcoming) {
+    if (view == _View.projects && sections.isEmpty) {
+      return _message(
+        'No projects yet. Press + to add a task, or add a '
+        'project with the folder button above.',
+      );
+    }
+    if (sections.every((s) => s.isEmpty) && view == _View.today) {
       return _message(
         view == _View.today
             ? 'Nothing due today 🎉'
@@ -399,7 +422,10 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.only(bottom: 88),
       children: [
         for (final (i, s) in sections.indexed) ...[
-          _header(s.title, s.tasks.length),
+          if (s.project case final project?)
+            _projectHeader(_store.project(project), s.tasks.length)
+          else
+            _header(s.title, s.tasks.length),
           for (final entry in agenda(s))
             switch (entry) {
               TaskEntry(:final task) => TaskTile(
@@ -449,6 +475,57 @@ class _HomeScreenState extends State<HomeScreen> {
             onTap: () => _edit(t),
           ),
       ],
+    );
+  }
+
+  /// A project's heading on the Projects tab, with buttons to add a task to
+  /// it and to edit it. Empty projects say so.
+  Widget _projectHeader(ProjectCalendar p, int count) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(radius: 5, backgroundColor: Color(p.color)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  count == 0 ? p.displayName : '${p.displayName}  ($count)',
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'New task in ${p.displayName}',
+                icon: const Icon(Icons.add, size: 20),
+                onPressed: () => _addTask(_View.projects, project: p.name),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Edit project',
+                icon: const Icon(Icons.more_horiz, size: 20),
+                onPressed: () => editProject(context, _store, p),
+              ),
+            ],
+          ),
+          if (count == 0)
+            Padding(
+              padding: const EdgeInsets.only(left: 20, bottom: 4),
+              child: Text(
+                'No open tasks',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

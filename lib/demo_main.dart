@@ -189,6 +189,8 @@ class _DemoAppState extends State<DemoApp> {
         ProjectCalendar(name: 'CSE 446', color: 0xFF8E24AA),
         ProjectCalendar(name: 'CSE 422', color: 0xFF039BE5),
         ProjectCalendar(name: 'Composite Layup', color: 0xFFF4511E),
+        // A project with no tasks yet.
+        ProjectCalendar(name: 'Grad applications', color: 0xFF7CB342),
       ],
     );
   }

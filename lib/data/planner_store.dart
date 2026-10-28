@@ -30,8 +30,14 @@ abstract class PlannerStore extends ChangeNotifier {
   /// [ensureSessionsFrom] (by default, two weeks ago).
   List<WorkSession> get sessions;
 
-  /// Saved project calendar settings (not every project has one).
+  /// Saved projects with their calendar settings. A project is saved when
+  /// it's created or first used, and stays until it's deleted, even with no
+  /// tasks in it.
   List<ProjectCalendar> get savedProjects;
+
+  /// [savedProjects] has loaded. Until then nothing is added to it, so as
+  /// not to overwrite the saved list.
+  bool get projectsLoaded => true;
 
   /// Makes sure [sessions] covers everything from [from] onward.
   void ensureSessionsFrom(DateTime from);
@@ -86,6 +92,33 @@ abstract class PlannerStore extends ChangeNotifier {
     for (final p in savedProjects)
       if (p.name.isNotEmpty) p.name,
   }.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+  /// Saves any of [names] that isn't a saved project yet, with default
+  /// settings, so it stays around after its tasks are done or deleted.
+  Future<void> rememberProjects(Iterable<String> names) async {
+    if (!projectsLoaded) return;
+    final known = {for (final p in savedProjects) p.name};
+    final missing = <String>{
+      for (final n in names)
+        if (n.trim().isNotEmpty && !known.contains(n.trim())) n.trim(),
+    };
+    if (missing.isEmpty) return;
+    await saveProjects([
+      ...savedProjects,
+      for (final n in missing) ProjectCalendar.defaults(n),
+    ]);
+  }
+
+  /// Deletes a project. Its tasks (and their sessions) move to the Inbox.
+  Future<void> deleteProject(String name) async {
+    for (final t in [...openTasks, ...completedTasks]) {
+      if (t.project.trim() == name) await saveTask(t.copyWith(project: ''));
+    }
+    await saveProjects([
+      for (final p in savedProjects)
+        if (p.name != name) p,
+    ]);
+  }
 
   /// Creates or updates one project's settings.
   Future<void> saveProject(ProjectCalendar p) => saveProjects([

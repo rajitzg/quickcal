@@ -7,7 +7,7 @@ import '../logic/calendar_layout.dart';
 import '../logic/task_views.dart';
 import '../models/project_calendar.dart';
 import '../models/task.dart';
-import '../theme/palette.dart';
+import 'project_dialog.dart';
 import 'task_tile.dart';
 
 /// Sidebar for the calendar view: open tasks grouped by project, each one
@@ -59,10 +59,9 @@ class _TaskPanelState extends State<TaskPanel> {
       }
       groups.putIfAbsent(t.project.trim(), () => []).add(t);
     }
+    // Projects stay listed with no open tasks, except when filtering.
     final projects = store.allProjects
-        .where(
-          (p) => groups.containsKey(p.name) || store.savedProjects.contains(p),
-        )
+        .where((p) => groups.containsKey(p.name) || !_unscheduledOnly)
         .toList();
 
     final panel = ColoredBox(
@@ -84,6 +83,11 @@ class _TaskPanelState extends State<TaskPanel> {
                   selectedIcon: const Icon(Icons.filter_list_alt),
                   onPressed: () =>
                       setState(() => _unscheduledOnly = !_unscheduledOnly),
+                ),
+                IconButton(
+                  tooltip: 'New project',
+                  icon: const Icon(Icons.create_new_folder_outlined),
+                  onPressed: () => newProject(context, store),
                 ),
                 IconButton(
                   tooltip: 'New task (⌘N)',
@@ -118,6 +122,7 @@ class _TaskPanelState extends State<TaskPanel> {
                           : _collapsed.add(p.name),
                     ),
                     onAdd: () => widget.onNewTask(p.name),
+                    onEdit: () => editProject(context, store, p),
                   ),
                   if (!_collapsed.contains(p.name))
                     for (final t in groups[p.name] ?? const <Task>[])
@@ -226,6 +231,7 @@ class _ProjectHeader extends StatelessWidget {
     required this.collapsed,
     required this.onToggle,
     required this.onAdd,
+    required this.onEdit,
   });
 
   final ProjectCalendar project;
@@ -233,6 +239,9 @@ class _ProjectHeader extends StatelessWidget {
   final bool collapsed;
   final VoidCallback onToggle;
   final VoidCallback onAdd;
+
+  /// Right-click or long-press: rename, recolor or delete.
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -242,6 +251,8 @@ class _ProjectHeader extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(6),
         onTap: onToggle,
+        onSecondaryTap: onEdit,
+        onLongPress: onEdit,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Row(
@@ -449,26 +460,6 @@ class _CalendarList extends StatelessWidget {
   final CalendarController? feeds;
   final VoidCallback onManageFeeds;
 
-  Future<void> _newProject(BuildContext context) async {
-    final result = await showDialog<ProjectCalendar>(
-      context: context,
-      builder: (_) => const _ProjectDialog(),
-    );
-    if (result != null && result.name.isNotEmpty) {
-      await store.saveProject(result);
-    }
-  }
-
-  Future<void> _editProject(BuildContext context, ProjectCalendar p) async {
-    final result = await showDialog<ProjectCalendar>(
-      context: context,
-      builder: (_) => _ProjectDialog(existing: p),
-    );
-    if (result == null) return;
-    if (result.name != p.name) await store.renameProject(p.name, result.name);
-    await store.saveProject(result);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -483,9 +474,9 @@ class _CalendarList extends StatelessWidget {
           IconButton(
             visualDensity: VisualDensity.compact,
             iconSize: 18,
-            tooltip: 'New project calendar',
+            tooltip: 'New project',
             icon: const Icon(Icons.add),
-            onPressed: () => _newProject(context),
+            onPressed: () => newProject(context, store),
           ),
         ),
         for (final p in store.allProjects)
@@ -494,7 +485,7 @@ class _CalendarList extends StatelessWidget {
             name: p.displayName,
             visible: !p.hidden,
             onVisible: (v) => store.saveProject(p.copyWith(hidden: !v)),
-            onEdit: () => _editProject(context, p),
+            onEdit: () => editProject(context, store, p),
           ),
         if (feeds?.google case final google? when google.connected)
           // One section per account, named by its address when there's more
@@ -628,99 +619,6 @@ class _CalendarRow extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ProjectDialog extends StatefulWidget {
-  const _ProjectDialog({this.existing});
-  final ProjectCalendar? existing;
-
-  @override
-  State<_ProjectDialog> createState() => _ProjectDialogState();
-}
-
-class _ProjectDialogState extends State<_ProjectDialog> {
-  late final _name = TextEditingController(text: widget.existing?.name ?? '');
-  late int _color =
-      widget.existing?.color ??
-      calendarPalette[DateTime.now().millisecond % calendarPalette.length];
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    final existing = widget.existing;
-    final name = _name.text.trim();
-    // The Inbox keeps its (empty) name; other projects need one.
-    if (name.isEmpty && existing?.name.isEmpty != true) return;
-    Navigator.pop(
-      context,
-      ProjectCalendar(
-        name: existing?.name.isEmpty == true ? '' : name,
-        color: _color,
-        hidden: existing?.hidden ?? false,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isInbox = widget.existing?.name.isEmpty == true;
-    return AlertDialog(
-      title: Text(
-        widget.existing == null ? 'New project calendar' : 'Edit calendar',
-      ),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!isInbox)
-              TextField(
-                controller: _name,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Project',
-                  hintText: 'CSE 446',
-                ),
-                onSubmitted: (_) => _save(),
-              ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final c in calendarPalette)
-                  InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: () => setState(() => _color = c),
-                    child: CircleAvatar(
-                      radius: 14,
-                      backgroundColor: Color(c),
-                      child: c == _color
-                          ? const Icon(
-                              Icons.check,
-                              size: 16,
-                              color: Colors.white,
-                            )
-                          : null,
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _save, child: const Text('Save')),
-      ],
     );
   }
 }

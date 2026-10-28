@@ -30,6 +30,8 @@ class FirestorePlannerStore extends PlannerStore {
   List<Task> _completed = const [];
   List<WorkSession> _sessions = const [];
   List<ProjectCalendar> _saved = const [];
+  bool _projectsLoaded = false;
+  bool _backfilled = false;
   DateTime? _sessionsFrom;
   Object? _error;
 
@@ -45,6 +47,8 @@ class FirestorePlannerStore extends PlannerStore {
   List<WorkSession> get sessions => _sessions;
   @override
   List<ProjectCalendar> get savedProjects => _saved;
+  @override
+  bool get projectsLoaded => _projectsLoaded;
 
   void start() {
     void onError(Object e) {
@@ -57,6 +61,7 @@ class FirestorePlannerStore extends PlannerStore {
         _tasks.watchOpen().listen((v) {
           _open = v;
           _error = null;
+          _backfillProjects();
           notifyListeners();
         }, onError: onError),
       )
@@ -69,11 +74,25 @@ class FirestorePlannerStore extends PlannerStore {
       ..add(
         _projects.watch().listen((v) {
           _saved = v;
+          _projectsLoaded = true;
+          _backfillProjects();
           notifyListeners();
         }, onError: onError),
       );
     final today = dateOnly(DateTime.now());
     ensureSessionsFrom(DateTime(today.year, today.month, today.day - 14));
+  }
+
+  /// Once both have loaded: saves projects that only existed through their
+  /// tasks (from before projects were kept), so they don't disappear.
+  void _backfillProjects() {
+    if (_backfilled || _open == null || !_projectsLoaded) return;
+    _backfilled = true;
+    unawaited(
+      rememberProjects([
+        for (final t in [..._open!, ..._completed]) t.project,
+      ]),
+    );
   }
 
   @override
@@ -107,6 +126,7 @@ class FirestorePlannerStore extends PlannerStore {
     final old = taskById(task.id);
     await Future.wait([
       _tasks.save(task),
+      rememberProjects([task.project]),
       if (old != null &&
           (old.title != task.title || old.project != task.project))
         _sessionsRepo.renameTask(task.id, task.title, task.project),

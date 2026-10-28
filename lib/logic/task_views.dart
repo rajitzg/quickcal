@@ -44,8 +44,12 @@ class TaskSection {
     this.tasks, {
     this.events = const [],
     this.sessions = const [],
+    this.project,
   });
   final String title;
+
+  /// The project this section lists (Projects tab only; '' is the Inbox).
+  final String? project;
 
   /// Tasks due in this section.
   final List<Task> tasks;
@@ -215,8 +219,12 @@ List<TaskSection> upcomingSections(
 }
 
 /// Open tasks grouped by project, Inbox (no project) first, then A–Z.
-List<TaskSection> projectSections(List<Task> open) {
-  final groups = <String, List<Task>>{};
+/// [projects] are listed too, even with no open tasks.
+List<TaskSection> projectSections(
+  List<Task> open, {
+  Iterable<String> projects = const [],
+}) {
+  final groups = <String, List<Task>>{for (final p in projects) p.trim(): []};
   for (final t in open) {
     groups.putIfAbsent(t.project.trim(), () => []).add(t);
   }
@@ -231,6 +239,7 @@ List<TaskSection> projectSections(List<Task> open) {
       TaskSection(
         name.isEmpty ? 'Inbox' : name,
         groups[name]!..sort(compareTasks),
+        project: name,
       ),
   ];
 }

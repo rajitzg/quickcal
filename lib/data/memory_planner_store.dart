@@ -58,6 +58,7 @@ class MemoryPlannerStore extends PlannerStore {
   @override
   Future<void> saveTask(Task task) async {
     _put<Task>(_tasks, task, (t) => t.id == task.id);
+    await rememberProjects([task.project]);
     for (var i = 0; i < _sessions.length; i++) {
       if (_sessions[i].taskId == task.id) {
         _sessions[i] = _sessions[i].copyWith(

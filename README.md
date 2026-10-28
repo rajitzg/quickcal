@@ -7,7 +7,7 @@ A minimal, fast task list and planner for macOS and Android, synced through Fire
 - **Calendar** (Mac / wide windows): see "Calendar planner" below
 - **Today**: overdue tasks, tasks due today, and work sessions scheduled today
 - **Upcoming**: the next 7 days, each showing what's due and what's scheduled that day, then Later and Unscheduled
-- **Projects**: open tasks grouped by project (no project = Inbox)
+- **Projects**: open tasks grouped by project (no project = Inbox). Projects are kept until you delete them, even with no open tasks. The folder button adds a new, empty project; **+** next to a project adds a task to it, and **⋯** renames, recolors or deletes it. Deleting a project moves its tasks to the Inbox.
 - **Done**: the 50 most recently completed tasks, which you can reopen
 - **Calendars**: classes and events from any iCal feed (Google, iCloud, Outlook, Canvas) appear on Today and Upcoming, interleaved with tasks by time. Tap an event to see details or to add a task for it. The event name becomes the task's project, so an assignment for "CS 201" files itself under that class.
 - Works offline. Firestore caches everything locally, so edits are instant and sync when you're back online.
@@ -93,7 +93,8 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 
 **Calendars:**
 - Each project has its own calendar with a color and a show/hide checkbox, listed in **Calendars** at the bottom left.
-- **+** creates a project calendar before it has any tasks. **⋯** renames or recolors one; renaming updates its tasks and sessions too.
+- The folder button above the task list (or **+** next to **Projects** under Calendars) creates a project before it has any tasks. **⋯**, or right-clicking a project's heading, renames, recolors or deletes it; renaming updates its tasks and sessions too.
+- Projects stay listed when all their tasks are done. A project you type into a task is saved the first time it's used.
 - Subscribed iCal feeds are listed there as well.
 
 **Keyboard:**
@@ -166,7 +167,7 @@ Known limits:
 ## Data model
 Work sessions are documents at `users/{uid}/sessions/{id}`: `taskId`, `start`, `end`, plus copies of the task's `title` and `project`. These copies let the calendar draw sessions of completed tasks, and they're updated when the task is renamed. Deleting a task deletes its sessions.
 
-Project calendar colors and visibility are stored in `users/{uid}/settings/projects`.
+Projects, with their calendar colors and visibility, are stored in `users/{uid}/settings/projects`. Projects that only existed as names on tasks (from older versions) are saved there the first time the app starts.
 
 Calendar subscriptions are stored in `users/{uid}/settings/calendars`, as a `feeds` list of `{id, name, url, color, enabled}`.
 
