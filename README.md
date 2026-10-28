@@ -119,10 +119,11 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 `flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.
 
 ## Google Calendar
-Connect a Google account to see its calendars without iCal links, and to change them from Taskflow:
-- **Connecting:** under **Calendars…** → **Google Calendar** → **Connect**, then tick which calendars to show. Your choices sync between devices; you connect the account once on each device.
-- **New blocks:** a block drawn on empty space (or long-pressed on the phone) can be **a task in a project** or **an event in one of your Google calendars**. Pick it in the dialog's **Add to** field. The dialog remembers your last choice.
-- **Editing:** you can drag, resize and delete events in Google calendars you're allowed to edit (right-click → Delete, or select and press Delete). Changes go straight to Google, and are undone if Google refuses them. View-only calendars, like holidays, stay fixed.
+Connect one or more Google accounts to see their calendars without iCal links, and to change them from Taskflow:
+- **Connecting:** under **Calendars…** → **Google Calendar** → **Connect**, then tick which calendars to show. Your choices sync between devices; you connect each account once on each device.
+- **Several accounts:** **Add another Google account** connects another one, e.g. a school account next to your personal one. Every account's calendars show together, and the sidebar lists them by account. A calendar shared with two of your accounts shows once. **Remove** next to an account disconnects only that account.
+- **New blocks:** a block drawn on empty space (or long-pressed on the phone) can be **a task in a project** or **an event in one of your Google calendars**, from any connected account. Pick it in the dialog's **Add to** field; with more than one account, each calendar is labeled with its account. The dialog remembers your last choice.
+- **Editing:** you can drag, resize and delete events in Google calendars you're allowed to edit (right-click → Delete, or select and press Delete). Changes go straight to Google, through the account the event came from, and are undone if Google refuses them. View-only calendars, like holidays, stay fixed.
 - **Updates:** changes made in Google Calendar itself appear within about 5 minutes while the app is open.
 - **No duplicates:** an iCal link to a calendar you've connected through Google is hidden, so nothing shows twice. You can delete the link.
 - **Home screen widget:** includes Google events. Its background refresh uses the events the app last loaded, since it can't sign in to Google on its own.

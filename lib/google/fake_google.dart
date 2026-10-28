@@ -98,33 +98,50 @@ class FakeGoogleCalendarClient implements GoogleCalendarClient {
   }
 }
 
-/// A [GoogleConnection] that's already connected to a fake client.
+/// A [GoogleConnection] to fake accounts, each with its own fake client.
+/// All are connected to start with, unless listed in [notConnected].
 class FakeGoogleConnection extends GoogleConnection {
-  FakeGoogleConnection(this.fake, {this.account = 'demo@gmail.com'})
-    : super.base();
-  final FakeGoogleCalendarClient fake;
-  String? account;
+  FakeGoogleConnection(this.fakes, {Set<String> notConnected = const {}})
+    : _accounts = [
+        for (final a in fakes.keys)
+          if (!notConnected.contains(a)) a,
+      ],
+      super.base();
+
+  /// One account, `demo@gmail.com`.
+  FakeGoogleConnection.single(
+    FakeGoogleCalendarClient fake, {
+    String account = 'demo@gmail.com',
+  }) : this({account: fake});
+
+  final Map<String, FakeGoogleCalendarClient> fakes;
+  final List<String> _accounts;
 
   @override
   bool get configured => true;
   @override
-  String? get email => account;
+  List<String> get accounts => List.unmodifiable(_accounts);
   @override
   Object? get error => null;
   @override
   Future<void> start() async => notifyListeners();
+
+  /// Connects the first fake account that isn't connected yet.
   @override
   Future<void> connect() async {
-    account = 'demo@gmail.com';
+    final next = fakes.keys.where((a) => !_accounts.contains(a)).firstOrNull;
+    if (next == null) return;
+    _accounts.add(next);
     notifyListeners();
   }
 
   @override
-  Future<void> disconnect() async {
-    account = null;
+  Future<void> disconnect(String account) async {
+    _accounts.remove(account);
     notifyListeners();
   }
 
   @override
-  Future<GoogleCalendarClient?> client() async => account == null ? null : fake;
+  Future<GoogleCalendarClient?> client(String account) async =>
+      _accounts.contains(account) ? fakes[account] : null;
 }

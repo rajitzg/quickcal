@@ -89,10 +89,14 @@ GoogleCalendars google({List<GoogleCalendarSetting> settings = const []}) {
     },
   );
   return GoogleCalendars(
-    FakeGoogleConnection(fake),
+    FakeGoogleConnection.single(fake, account: me),
     MemoryGoogleSettings(settings),
   )..start();
 }
+
+/// Feed id of [calendar] as listed by [account].
+String feedOf(String calendar, [String account = me]) =>
+    'google:$account/$calendar';
 
 /// Lets queued async work (loading, API calls) finish.
 Future<void> settle() async {
@@ -124,29 +128,32 @@ void main() {
         ('Lab meeting', true),
         ('Holiday', false),
       ]);
-      expect(c.feed('google:$me')?.color, 0xFF0B8043);
+      expect(c.feed(feedOf(me))?.color, 0xFF0B8043);
     });
 
     test('an invited copy shows once, in the organizing calendar', () async {
       final c = await controller(google());
-      final lab = c
+      final meeting = c
           .eventsBetween(from, to)
           .where((e) => e.title == 'Lab meeting');
-      expect(lab.single.feedId, 'google:lab@group.calendar.google.com');
+      expect(meeting.single.feedId, feedOf(lab));
     });
 
-    test('hidden calendars are left out', () async {
-      final g = google(
-        settings: const [
-          GoogleCalendarSetting(id: holidays, color: 0, enabled: false),
-        ],
-      );
-      final c = await controller(g);
-      expect(
-        c.eventsBetween(from, to).map((e) => e.title),
-        isNot(contains('Holiday')),
-      );
-    });
+    test(
+      'hidden calendars are left out (settings saved before accounts)',
+      () async {
+        final g = google(
+          settings: const [
+            GoogleCalendarSetting(id: holidays, color: 0, enabled: false),
+          ],
+        );
+        final c = await controller(g);
+        expect(
+          c.eventsBetween(from, to).map((e) => e.title),
+          isNot(contains('Holiday')),
+        );
+      },
+    );
 
     test('an iCal link to a connected calendar is not shown twice', () async {
       final ics =
@@ -167,7 +174,7 @@ void main() {
             .where((e) => e.title == 'Dentist')
             .single
             .feedId,
-        'google:$me',
+        feedOf(me),
       );
     });
 
@@ -175,7 +182,7 @@ void main() {
       final g = google();
       final c = await controller(g);
       final pending = g.create(
-        me,
+        '$me/$me',
         'Coffee',
         DateTime(2026, 10, 28, 15),
         DateTime(2026, 10, 28, 16),
@@ -243,7 +250,7 @@ void main() {
         },
       );
       final g = GoogleCalendars(
-        FakeGoogleConnection(fake),
+        FakeGoogleConnection.single(fake, account: me),
         MemoryGoogleSettings(),
         cacheFile: () async => file,
       )..start();
@@ -253,6 +260,116 @@ void main() {
       final cached = await GoogleCalendars.readCache(file);
       expect(cached!.feeds.single.color, 5);
       expect(cached.calendars.single.events.single.title, 'Soon');
+    });
+  });
+
+  group('several accounts', () {
+    const school = 'me@school.edu';
+    late FakeGoogleCalendarClient schoolFake;
+
+    /// [me] plus a school account, which also lists the Lab calendar
+    /// (shared with both).
+    GoogleCalendars twoAccounts({bool schoolConnected = true}) {
+      google(); // sets up [fake] for me@gmail.com
+      schoolFake = FakeGoogleCalendarClient(
+        const [
+          GoogleCalendarInfo(
+            id: school,
+            name: 'School',
+            color: 0xFF039BE5,
+            canWrite: true,
+            primary: true,
+          ),
+          GoogleCalendarInfo(
+            id: lab,
+            name: 'Lab',
+            color: 0xFF8E24AA,
+            canWrite: true,
+          ),
+        ],
+        {
+          school: [ev('ta', 'TA section', DateTime(2026, 10, 29, 10))],
+          lab: [
+            ev(
+              'lab-real',
+              'Lab meeting',
+              DateTime(2026, 10, 27, 13),
+              uid: 'labmeeting',
+              organizer: lab,
+            ),
+          ],
+        },
+      );
+      return GoogleCalendars(
+        FakeGoogleConnection({
+          me: fake,
+          school: schoolFake,
+        }, notConnected: schoolConnected ? const {} : const {school}),
+        MemoryGoogleSettings(),
+      )..start();
+    }
+
+    test('shows every account; a shared calendar once', () async {
+      final g = twoAccounts();
+      final c = await controller(g);
+      final titles = c.eventsBetween(from, to).map((e) => e.title).toList();
+      expect(titles, containsAll(['Dentist', 'TA section', 'Holiday']));
+      expect(titles.where((t) => t == 'Lab meeting'), hasLength(1));
+      expect(g.calendarsOf(school).map((c) => c.name), ['School', 'Lab']);
+      // Every account's editable calendars, each primary first.
+      expect(g.writableCalendars.map((c) => c.key), [
+        '$me/$me',
+        '$me/$lab',
+        '$school/$school',
+        '$school/$lab',
+      ]);
+    });
+
+    test('new events go through the chosen account', () async {
+      final g = twoAccounts();
+      await controller(g);
+      await g.create(
+        '$school/$school',
+        'Grading',
+        DateTime(2026, 10, 30, 14),
+        DateTime(2026, 10, 30, 15),
+      );
+      expect(schoolFake.calls, ['insert $school Grading']);
+      expect(fake.calls, isEmpty);
+    });
+
+    test('moves go through the account the event came from', () async {
+      final g = twoAccounts();
+      final c = await controller(g);
+      final ta = c
+          .eventsBetween(from, to)
+          .firstWhere((e) => e.title == 'TA section');
+      await g.move(ta, DateTime(2026, 10, 29, 11), DateTime(2026, 10, 29, 12));
+      expect(schoolFake.calls, ['move $school ta']);
+      expect(fake.calls, isEmpty);
+    });
+
+    test('adding and removing an account', () async {
+      final g = twoAccounts(schoolConnected: false);
+      final c = await controller(g);
+      expect(g.accounts, [me]);
+      expect(
+        c.eventsBetween(from, to).map((e) => e.title),
+        isNot(contains('TA section')),
+      );
+      await g.connection.connect();
+      await settle();
+      expect(g.accounts, [me, school]);
+      expect(
+        c.eventsBetween(from, to).map((e) => e.title),
+        contains('TA section'),
+      );
+      await g.connection.disconnect(me);
+      await settle();
+      final titles = c.eventsBetween(from, to).map((e) => e.title);
+      expect(titles, isNot(contains('Dentist')));
+      // The shared calendar still shows, now through the school account.
+      expect(titles, containsAll(['TA section', 'Lab meeting']));
     });
   });
 

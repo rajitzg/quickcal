@@ -38,7 +38,7 @@ class _DemoAppState extends State<DemoApp> {
     ..showDemo(_sampleFeeds())
     ..attachGoogle(_sampleGoogle()..start());
 
-  /// A pretend connected Google account with two calendars.
+  /// Two pretend connected Google accounts, personal and school.
   GoogleCalendars _sampleGoogle() {
     CalendarEvent event(
       String id,
@@ -77,7 +77,24 @@ class _DemoAppState extends State<DemoApp> {
         ],
       },
     );
-    return GoogleCalendars(FakeGoogleConnection(fake), MemoryGoogleSettings());
+    final school = FakeGoogleCalendarClient(
+      const [
+        GoogleCalendarInfo(
+          id: 'demo@uw.edu',
+          name: 'School (Google)',
+          color: 0xFF3F51B5,
+          canWrite: true,
+          primary: true,
+        ),
+      ],
+      {
+        'demo@uw.edu': [event('s1', 'TA section', 5, 10.5, 11.5)],
+      },
+    );
+    return GoogleCalendars(
+      FakeGoogleConnection({'demo@gmail.com': fake, 'demo@uw.edu': school}),
+      MemoryGoogleSettings(),
+    );
   }
 
   /// [weekday] 0 = this Sunday … 6 = Saturday; [hour] may be fractional.

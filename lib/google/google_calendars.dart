@@ -13,7 +13,8 @@ import 'google_calendar_client.dart';
 import 'google_connection.dart';
 
 /// Which of the user's Google calendars to show, and in what color. Synced
-/// between devices (the account connection itself is per device).
+/// between devices (the account connections themselves are per device).
+/// [id] is the calendar's [GoogleCalendarInfo.key].
 class GoogleCalendarSetting {
   const GoogleCalendarSetting({
     required this.id,
@@ -38,6 +39,9 @@ class GoogleCalendarSetting {
         color: m['color'] as int? ?? 0xFF3F51B5,
         enabled: m['enabled'] as bool? ?? true,
       );
+
+  GoogleCalendarSetting copyWithId(String id) =>
+      GoogleCalendarSetting(id: id, color: color, enabled: enabled);
 
   Map<String, Object> toMap() => {'id': id, 'color': color, 'enabled': enabled};
 }
@@ -91,8 +95,12 @@ class MemoryGoogleSettings implements GoogleSettingsStore {
   }
 }
 
-/// Events from the connected Google account's calendars, loaded for the
+/// Events from the connected Google accounts' calendars, loaded for the
 /// dates being looked at, and created, moved and deleted through the API.
+///
+/// Calendars are told apart by [GoogleCalendarInfo.key] (account and
+/// calendar id), since two accounts can list the same calendar. Feeds are
+/// `google:<key>`.
 ///
 /// Changes show immediately and are undone if Google refuses them.
 class GoogleCalendars extends ChangeNotifier {
@@ -109,8 +117,12 @@ class GoogleCalendars extends ChangeNotifier {
 
   StreamSubscription<List<GoogleCalendarSetting>>? _settingsSub;
   Timer? _timer;
-  List<GoogleCalendarInfo> _calendars = const [];
+
+  /// Account → its calendars.
+  final _calendars = <String, List<GoogleCalendarInfo>>{};
   List<GoogleCalendarSetting> _settings = const [];
+
+  /// Calendar key → events.
   final _events = <String, List<CalendarEvent>>{};
   (DateTime, DateTime)? _loaded;
   Future<void>? _loading;
@@ -119,7 +131,15 @@ class GoogleCalendars extends ChangeNotifier {
 
   bool get connected => connection.connected;
   Object? get error => _error ?? connection.error;
-  List<GoogleCalendarInfo> get calendars => _calendars;
+  List<String> get accounts => connection.accounts;
+
+  /// Every connected account's calendars, account by account.
+  List<GoogleCalendarInfo> get calendars => [
+    for (final a in accounts) ...calendarsOf(a),
+  ];
+
+  List<GoogleCalendarInfo> calendarsOf(String account) =>
+      _calendars[account] ?? const [];
 
   void start() {
     connection.addListener(_connectionChanged);
@@ -133,11 +153,16 @@ class GoogleCalendars extends ChangeNotifier {
   }
 
   void _connectionChanged() {
-    if (connection.connected) {
+    // Forget accounts that were removed.
+    final current = accounts.toSet();
+    _calendars.removeWhere((account, _) => !current.contains(account));
+    _events.removeWhere(
+      (key, _) => !current.contains(key.substring(0, key.lastIndexOf('/'))),
+    );
+    if (connected) {
+      // Also loads any account just added.
       unawaited(refresh());
     } else {
-      _calendars = const [];
-      _events.clear();
       _loaded = null;
       notifyListeners();
     }
@@ -146,21 +171,29 @@ class GoogleCalendars extends ChangeNotifier {
   // ---- Settings ------------------------------------------------------------
 
   GoogleCalendarSetting settingFor(GoogleCalendarInfo c) =>
-      _settings.where((s) => s.id == c.id).firstOrNull ??
-      GoogleCalendarSetting(id: c.id, color: c.color, enabled: true);
+      _settings.where((s) => s.id == c.key).firstOrNull ??
+      // Saved before settings were per account.
+      _settings.where((s) => s.id == c.id).firstOrNull?.copyWithId(c.key) ??
+      GoogleCalendarSetting(id: c.key, color: c.color, enabled: true);
 
   bool isShown(GoogleCalendarInfo c) => settingFor(c).enabled;
 
   /// Shown calendars by address, e.g. to hide iCal links to the same ones.
   Set<String> get shownCalendarIds => {
-    for (final c in _calendars)
+    for (final c in calendars)
       if (isShown(c)) c.id.toLowerCase(),
   };
 
+  /// Calendars a new event can go to, from every account: each account's
+  /// primary calendar first.
   List<GoogleCalendarInfo> get writableCalendars => [
-    for (final c in _calendars)
-      if (c.canWrite) c,
-  ]..sort((a, b) => a.primary ? -1 : (b.primary ? 1 : 0));
+    for (final a in accounts) ...[
+      for (final c in calendarsOf(a))
+        if (c.canWrite && c.primary) c,
+      for (final c in calendarsOf(a))
+        if (c.canWrite && !c.primary) c,
+    ],
+  ];
 
   Future<void> updateSetting(GoogleCalendarSetting setting) async {
     await _settingsStore.save([
@@ -173,12 +206,12 @@ class GoogleCalendars extends ChangeNotifier {
   }
 
   /// Calendars as feeds, so the rest of the app can color and name them.
-  List<CalendarFeed> get feeds => [for (final c in _calendars) _feedOf(c)];
+  List<CalendarFeed> get feeds => [for (final c in calendars) _feedOf(c)];
 
   CalendarFeed _feedOf(GoogleCalendarInfo c) {
     final s = settingFor(c);
     return CalendarFeed(
-      id: '$feedPrefix${c.id}',
+      id: '$feedPrefix${c.key}',
       name: c.name,
       url: '',
       color: s.color,
@@ -187,32 +220,38 @@ class GoogleCalendars extends ChangeNotifier {
   }
 
   CalendarFeed? feed(String feedId) {
-    final c = _calendarOf(feedId);
+    final c = calendarOf(feedId);
     return c == null ? null : _feedOf(c);
   }
 
-  GoogleCalendarInfo? _calendarOf(String feedId) =>
-      feedId.startsWith(feedPrefix)
-      ? _calendars
-            .where((c) => c.id == feedId.substring(feedPrefix.length))
-            .firstOrNull
-      : null;
+  /// The calendar behind a feed id (or an event's [CalendarEvent.feedId]).
+  GoogleCalendarInfo? calendarOf(String feedId) {
+    if (!feedId.startsWith(feedPrefix)) return null;
+    final key = feedId.substring(feedPrefix.length);
+    return _byKey(key);
+  }
+
+  GoogleCalendarInfo? _byKey(String key) =>
+      calendars.where((c) => c.key == key).firstOrNull;
 
   // ---- Reading -------------------------------------------------------------
 
   /// Shown calendars' events overlapping [from, to), per calendar, for
   /// merging with other feeds. Loads the range from Google if needed.
+  ///
+  /// A calendar listed by two accounts appears twice with the same
+  /// calendarId, so merging shows its events once.
   List<({String feedId, String calendarId, List<CalendarEvent> events})>
   eventsBetween(DateTime from, DateTime to) {
     ensureRange(from, to);
     return [
-      for (final c in _calendars)
+      for (final c in calendars)
         if (isShown(c))
           (
-            feedId: '$feedPrefix${c.id}',
+            feedId: '$feedPrefix${c.key}',
             calendarId: c.id.toLowerCase(),
             events: [
-              for (final e in _events[c.id] ?? const <CalendarEvent>[])
+              for (final e in _events[c.key] ?? const <CalendarEvent>[])
                 if (e.overlaps(from, to)) e,
             ],
           ),
@@ -241,18 +280,23 @@ class GoogleCalendars extends ChangeNotifier {
         .whenComplete(() => _loading = null);
   }
 
-  /// Reloads the calendar list and the loaded dates.
+  /// Reloads every account's calendar list and the loaded dates.
   Future<void> refresh() async {
     if (!connected) return;
     await _loading;
-    try {
-      final client = await connection.client();
-      if (client == null) return;
-      _calendars = await client.calendars();
-      _error = null;
-    } catch (e) {
-      _error = e;
+    Object? error;
+    for (final account in accounts) {
+      try {
+        final client = await connection.client(account);
+        if (client == null) continue;
+        _calendars[account] = [
+          for (final c in await client.calendars()) c.withAccount(account),
+        ];
+      } catch (e) {
+        error = _accountError(account, e);
+      }
     }
+    _error = error;
     notifyListeners();
     final loaded = _loaded;
     if (loaded != null) {
@@ -264,60 +308,75 @@ class GoogleCalendars extends ChangeNotifier {
     }
   }
 
+  Object _accountError(String account, Object e) =>
+      accounts.length > 1 ? '$account: $e' : e;
+
   Future<void> _load(DateTime from, DateTime to) async {
-    try {
-      final client = await connection.client();
-      if (client == null) return;
-      if (_calendars.isEmpty) _calendars = await client.calendars();
-      for (final c in _calendars) {
-        if (!isShown(c)) continue;
-        final fetched = await client.events(
-          c,
-          from,
-          to,
-          feedId: '$feedPrefix${c.id}',
-        );
-        _events[c.id] = [
-          for (final e in _events[c.id] ?? const <CalendarEvent>[])
-            if (!e.overlaps(from, to)) e,
-          ...fetched,
-        ];
+    Object? error;
+    var any = false;
+    for (final account in accounts) {
+      try {
+        final client = await connection.client(account);
+        if (client == null) continue;
+        any = true;
+        if (calendarsOf(account).isEmpty) {
+          _calendars[account] = [
+            for (final c in await client.calendars()) c.withAccount(account),
+          ];
+        }
+        for (final c in calendarsOf(account)) {
+          if (!isShown(c)) continue;
+          final fetched = await client.events(
+            c,
+            from,
+            to,
+            feedId: '$feedPrefix${c.key}',
+          );
+          _events[c.key] = [
+            for (final e in _events[c.key] ?? const <CalendarEvent>[])
+              if (!e.overlaps(from, to)) e,
+            ...fetched,
+          ];
+        }
+      } catch (e) {
+        error = _accountError(account, e);
       }
-      _loaded = (from, to);
-      _error = null;
-      unawaited(_writeCache());
-    } catch (e) {
-      _error = e;
     }
+    if (any) {
+      _loaded = (from, to);
+      unawaited(_writeCache());
+    }
+    _error = error;
     notifyListeners();
   }
 
   // ---- Writing -------------------------------------------------------------
 
-  /// Adds an event to the Google calendar [calendarId].
+  /// Adds an event to the calendar with [GoogleCalendarInfo.key]
+  /// [calendarKey].
   Future<void> create(
-    String calendarId,
+    String calendarKey,
     String title,
     DateTime start,
     DateTime end,
   ) async {
-    final calendar = _calendars.firstWhere((c) => c.id == calendarId);
+    final calendar = _byKey(calendarKey)!;
     final local = CalendarEvent(
       id: 'new-${_nextLocalId++}@${start.millisecondsSinceEpoch}',
-      feedId: '$feedPrefix$calendarId',
+      feedId: '$feedPrefix$calendarKey',
       title: title,
       start: start,
       end: end,
-      organizer: calendarId.toLowerCase(),
+      organizer: calendar.id.toLowerCase(),
       editable: false, // until Google has given it an id
     );
-    _put(calendarId, local);
+    _put(calendarKey, local);
     try {
-      final client = await _clientOrThrow();
-      final id = await client.insert(calendarId, title, start, end);
-      _remove(calendarId, local.id);
+      final client = await _clientOrThrow(calendar.account);
+      final id = await client.insert(calendar.id, title, start, end);
+      _remove(calendarKey, local.id);
       _put(
-        calendarId,
+        calendarKey,
         CalendarEvent(
           id: '$id@${start.millisecondsSinceEpoch}',
           feedId: local.feedId,
@@ -331,57 +390,57 @@ class GoogleCalendars extends ChangeNotifier {
         ),
       );
     } catch (e) {
-      _remove(calendarId, local.id);
+      _remove(calendarKey, local.id);
       rethrow;
     }
   }
 
-  /// Moves or resizes [event] in Google.
+  /// Moves or resizes [event] in Google, through the account it came from.
   Future<void> move(CalendarEvent event, DateTime start, DateTime end) async {
-    final calendarId = _calendarOf(event.feedId)!.id;
+    final calendar = calendarOf(event.feedId)!;
     final moved = event.copyWith(start: start, end: end);
-    _replace(calendarId, event.id, moved);
+    _replace(calendar.key, event.id, moved);
     try {
-      final client = await _clientOrThrow();
-      await client.move(calendarId, event.remoteId!, start, end);
+      final client = await _clientOrThrow(calendar.account);
+      await client.move(calendar.id, event.remoteId!, start, end);
     } catch (e) {
-      _replace(calendarId, event.id, event);
+      _replace(calendar.key, event.id, event);
       rethrow;
     }
   }
 
   Future<void> delete(CalendarEvent event) async {
-    final calendarId = _calendarOf(event.feedId)!.id;
-    _remove(calendarId, event.id);
+    final calendar = calendarOf(event.feedId)!;
+    _remove(calendar.key, event.id);
     try {
-      final client = await _clientOrThrow();
-      await client.delete(calendarId, event.remoteId!);
+      final client = await _clientOrThrow(calendar.account);
+      await client.delete(calendar.id, event.remoteId!);
     } catch (e) {
-      _put(calendarId, event);
+      _put(calendar.key, event);
       rethrow;
     }
   }
 
-  Future<GoogleCalendarClient> _clientOrThrow() async {
-    final client = await connection.client();
+  Future<GoogleCalendarClient> _clientOrThrow(String account) async {
+    final client = await connection.client(account);
     if (client == null) {
-      throw StateError('Reconnect Google Calendar in Calendars');
+      throw StateError('Reconnect $account in Calendars');
     }
     return client;
   }
 
-  void _put(String calendarId, CalendarEvent e) {
-    (_events[calendarId] ??= []).add(e);
+  void _put(String key, CalendarEvent e) {
+    (_events[key] ??= []).add(e);
     notifyListeners();
   }
 
-  void _remove(String calendarId, String eventId) {
-    _events[calendarId]?.removeWhere((e) => e.id == eventId);
+  void _remove(String key, String eventId) {
+    _events[key]?.removeWhere((e) => e.id == eventId);
     notifyListeners();
   }
 
-  void _replace(String calendarId, String eventId, CalendarEvent e) {
-    final list = _events[calendarId];
+  void _replace(String key, String eventId, CalendarEvent e) {
+    final list = _events[key];
     final i = list?.indexWhere((x) => x.id == eventId) ?? -1;
     if (i >= 0) list![i] = e;
     notifyListeners();
@@ -399,7 +458,7 @@ class GoogleCalendars extends ChangeNotifier {
       await (await file()).writeAsString(
         jsonEncode({
           'feeds': [
-            for (final c in _calendars)
+            for (final c in calendars)
               if (isShown(c)) _feedOf(c).toMap(),
           ],
           'calendars': [

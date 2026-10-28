@@ -496,29 +496,32 @@ class _CalendarList extends StatelessWidget {
             onVisible: (v) => store.saveProject(p.copyWith(hidden: !v)),
             onEdit: () => _editProject(context, p),
           ),
-        if (feeds?.google case final google? when google.connected) ...[
-          _sectionHeader(
-            theme,
-            'Google',
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              iconSize: 18,
-              tooltip: 'Google Calendar settings',
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: onManageFeeds,
-            ),
-          ),
-          for (final c in google.calendars)
-            _CalendarRow(
-              color: google.settingFor(c).color,
-              name: c.name,
-              visible: google.isShown(c),
-              onVisible: (v) => google.updateSetting(
-                google.settingFor(c).copyWith(enabled: v),
+        if (feeds?.google case final google? when google.connected)
+          // One section per account, named by its address when there's more
+          // than one.
+          for (final account in google.accounts) ...[
+            _sectionHeader(
+              theme,
+              google.accounts.length > 1 ? account : 'Google',
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                iconSize: 18,
+                tooltip: 'Google Calendar settings',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: onManageFeeds,
               ),
-              onEdit: onManageFeeds,
             ),
-        ],
+            for (final c in google.calendarsOf(account))
+              _CalendarRow(
+                color: google.settingFor(c).color,
+                name: c.name,
+                visible: google.isShown(c),
+                onVisible: (v) => google.updateSetting(
+                  google.settingFor(c).copyWith(enabled: v),
+                ),
+                onEdit: onManageFeeds,
+              ),
+          ],
         _sectionHeader(
           theme,
           'Subscribed',
@@ -561,6 +564,8 @@ class _CalendarList extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelMedium!.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

@@ -10,6 +10,7 @@ class GoogleCalendarInfo {
     required this.color,
     required this.canWrite,
     this.primary = false,
+    this.account = '',
   });
 
   /// The calendar's address, e.g. `you@gmail.com`.
@@ -22,6 +23,22 @@ class GoogleCalendarInfo {
   /// The user can add and change events (owner or writer).
   final bool canWrite;
   final bool primary;
+
+  /// The connected Google account this calendar was listed by. The same
+  /// calendar can be listed by two accounts (e.g. one shared with both).
+  final String account;
+
+  /// Identifies the calendar within its account: `account/id`.
+  String get key => '$account/$id';
+
+  GoogleCalendarInfo withAccount(String account) => GoogleCalendarInfo(
+    id: id,
+    name: name,
+    color: color,
+    canWrite: canWrite,
+    primary: primary,
+    account: account,
+  );
 }
 
 /// The Google Calendar calls the app makes. Kept small and behind an

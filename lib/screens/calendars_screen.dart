@@ -327,7 +327,7 @@ class _HowTo extends StatelessWidget {
   }
 }
 
-/// Connect a Google account and choose which of its calendars to show.
+/// Connect Google accounts and choose which of their calendars to show.
 class _GoogleSection extends StatelessWidget {
   const _GoogleSection({required this.google});
   final GoogleCalendars google;
@@ -341,6 +341,30 @@ class _GoogleSection extends StatelessWidget {
         context,
       ).showSnackBar(SnackBar(content: Text('Could not connect Google: $e')));
     }
+  }
+
+  Future<void> _remove(BuildContext context, String account) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove $account?'),
+        content: const Text(
+          'Its calendars will no longer show here. Nothing is changed in '
+          'Google Calendar, and you can connect the account again later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await google.connection.disconnect(account);
   }
 
   @override
@@ -371,7 +395,7 @@ class _GoogleSection extends StatelessWidget {
             title: const Text('Connect your Google account'),
             subtitle: const Text(
               'Show your Google calendars, and add or move their events '
-              'from here.',
+              'from here. You can connect more than one account.',
             ),
             trailing: FilledButton(
               onPressed: () => _connect(context),
@@ -379,31 +403,40 @@ class _GoogleSection extends StatelessWidget {
             ),
           )
         else ...[
+          for (final account in google.accounts) ...[
+            ListTile(
+              leading: const Icon(Icons.account_circle_outlined),
+              title: Text(account),
+              subtitle: const Text('Changes sync both ways.'),
+              trailing: TextButton(
+                onPressed: () => _remove(context, account),
+                child: const Text('Remove'),
+              ),
+            ),
+            for (final c in google.calendarsOf(account))
+              SwitchListTile(
+                contentPadding: const EdgeInsets.only(left: 32, right: 16),
+                secondary: CircleAvatar(
+                  radius: 10,
+                  backgroundColor: Color(google.settingFor(c).color),
+                ),
+                title: Text(c.name),
+                subtitle: Text(c.canWrite ? 'Can edit' : 'View only'),
+                value: google.isShown(c),
+                onChanged: (v) => google.updateSetting(
+                  google.settingFor(c).copyWith(enabled: v),
+                ),
+              ),
+          ],
           ListTile(
-            leading: const Icon(Icons.account_circle_outlined),
-            title: Text(connection.email!),
+            leading: const Icon(Icons.person_add_alt),
+            title: const Text('Add another Google account'),
             subtitle: const Text(
-              'Changes sync both ways. Calendars shown here replace any '
-              'iCal links to the same calendars.',
+              'Calendars shown here replace any iCal links to the same '
+              'calendars. A calendar shared with two accounts shows once.',
             ),
-            trailing: TextButton(
-              onPressed: connection.disconnect,
-              child: const Text('Disconnect'),
-            ),
+            onTap: () => _connect(context),
           ),
-          for (final c in google.calendars)
-            SwitchListTile(
-              secondary: CircleAvatar(
-                radius: 10,
-                backgroundColor: Color(google.settingFor(c).color),
-              ),
-              title: Text(c.name),
-              subtitle: Text(c.canWrite ? 'Can edit' : 'View only'),
-              value: google.isShown(c),
-              onChanged: (v) => google.updateSetting(
-                google.settingFor(c).copyWith(enabled: v),
-              ),
-            ),
         ],
         if (error != null)
           Padding(

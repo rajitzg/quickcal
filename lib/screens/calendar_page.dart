@@ -235,7 +235,7 @@ class _CalendarPageState extends State<CalendarPage> {
   GoogleCalendars? get _google => widget.feeds?.google;
 
   /// Where the last block drawn went: null for a project task, otherwise a
-  /// Google calendar id. The dialog starts there next time.
+  /// Google calendar's key. The dialog starts there next time.
   String? _lastDestination;
 
   Future<void> _createFromSelection(DateTime start, DateTime end) async {
@@ -250,15 +250,16 @@ class _CalendarPageState extends State<CalendarPage> {
         start: start,
         end: end,
         googleCalendars: calendars,
-        destination: calendars.any((c) => c.id == _lastDestination)
+        showAccounts: google != null && google.accounts.length > 1,
+        destination: calendars.any((c) => c.key == _lastDestination)
             ? _lastDestination
             : null,
       ),
     );
     if (choice == null) return;
-    _lastDestination = choice.googleCalendarId;
-    if (choice.googleCalendarId case final calendarId?) {
-      _run(google!.create(calendarId, choice.title, start, end));
+    _lastDestination = choice.googleCalendarKey;
+    if (choice.googleCalendarKey case final calendarKey?) {
+      _run(google!.create(calendarKey, choice.title, start, end));
       return;
     }
     var task = choice.existing;
@@ -612,7 +613,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   void _deleteGoogleEvent(CalendarEvent e) {
     final google = _google!;
-    final calendarId = e.feedId.substring(GoogleCalendars.feedPrefix.length);
+    final calendarKey = google.calendarOf(e.feedId)!.key;
     setState(() => _selectedId = null);
     _run(google.delete(e));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -621,7 +622,7 @@ class _CalendarPageState extends State<CalendarPage> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () =>
-              _run(google.create(calendarId, e.title, e.start, e.end)),
+              _run(google.create(calendarKey, e.title, e.start, e.end)),
         ),
       ),
     );
@@ -734,15 +735,15 @@ class _NewSessionChoice {
     this.existing,
     this.title = '',
     this.project = '',
-    this.googleCalendarId,
+    this.googleCalendarKey,
   });
   final Task? existing;
   final String title;
   final String project;
 
-  /// Set when the block should be an event in this Google calendar instead
-  /// of a work session for a task.
-  final String? googleCalendarId;
+  /// Set when the block should be an event in this Google calendar (its
+  /// [GoogleCalendarInfo.key]) instead of a work session for a task.
+  final String? googleCalendarKey;
 }
 
 /// Asks what a block drawn on empty calendar space is for: an existing task
@@ -753,6 +754,7 @@ class _NewSessionDialog extends StatefulWidget {
     required this.start,
     required this.end,
     this.googleCalendars = const [],
+    this.showAccounts = false,
     this.destination,
   });
 
@@ -763,7 +765,11 @@ class _NewSessionDialog extends StatefulWidget {
   /// Google calendars that can take a new event (empty: not connected).
   final List<GoogleCalendarInfo> googleCalendars;
 
-  /// Preselected Google calendar id; null for a task.
+  /// More than one Google account is connected: say which each calendar
+  /// belongs to.
+  final bool showAccounts;
+
+  /// Preselected Google calendar key; null for a task.
   final String? destination;
 
   @override
@@ -781,7 +787,7 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
       if (_title.trim().isEmpty) return;
       Navigator.pop(
         context,
-        _NewSessionChoice(title: _title.trim(), googleCalendarId: _calendarId),
+        _NewSessionChoice(title: _title.trim(), googleCalendarKey: _calendarId),
       );
     } else if (_existing != null) {
       Navigator.pop(context, _NewSessionChoice(existing: _existing));
@@ -824,7 +830,7 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
                   ),
                   for (final c in widget.googleCalendars)
                     DropdownMenuItem(
-                      value: c.id,
+                      value: c.key,
                       child: Row(
                         children: [
                           CircleAvatar(
@@ -834,7 +840,9 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              'Google · ${c.name}',
+                              widget.showAccounts
+                                  ? '${c.name} · ${c.account}'
+                                  : 'Google · ${c.name}',
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
