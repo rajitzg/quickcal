@@ -44,10 +44,11 @@ dependencies:
   path_provider: ^2.1.6
   home_widget: ^0.10.0
   workmanager: ^0.10.10
-  google_sign_in: ^7.2.0
   googleapis: ^17.0.0
-  extension_google_sign_in_as_googleapis_auth: ^3.0.0
-
+  google_sign_in_android: ^7.2.18
+  google_sign_in_platform_interface: ^3.1.0
+  googleapis_auth: ^2.3.5
+  url_launcher: ^6.3.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

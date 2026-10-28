@@ -142,21 +142,10 @@ Google needs to know the app before it can sign in. Use the Google Cloud project
      keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
      ```
      Flutter signs both debug and release builds with this key unless you set up your own. Nothing to copy into the app.
-   - **iOS** (used by macOS): bundle ID `com.rzghosh.taskflow`. Put its client ID in `googleAppleClientId` in `lib/google/google_setup.dart`, and add its **iOS URL scheme** (the client ID reversed, `com.googleusercontent.apps.…`) to `macos/Runner/Info.plist`, inside the top-level `<dict>`:
-     ```xml
-     <key>CFBundleURLTypes</key>
-     <array>
-       <dict>
-         <key>CFBundleURLSchemes</key>
-         <array>
-           <string>com.googleusercontent.apps.YOUR-ID-HERE</string>
-         </array>
-       </dict>
-     </array>
-     ```
+   - **Desktop app** (used by the Mac): copy its client ID and client secret into `googleDesktopClientId` and `googleDesktopClientSecret` in `lib/google/google_setup.dart`. On the Mac, **Connect** opens Google's sign-in page in your browser; when you finish, the app picks up the result and stays signed in. Nothing else to configure: Google doesn't treat a desktop app's secret as secret.
 4. **Rebuild** the app on each device and connect from **Calendars…**.
 
-The keychain entitlement that Google sign-in needs on macOS is already in `macos/Runner/*.entitlements`.
+The permission the Mac app needs to receive the browser sign-in (a local port) is already in `macos/Runner/*.entitlements`.
 
 ## Adding calendars
 Menu (⋮) → **Calendars…** → **Add calendar**, then paste the calendar's iCal link. The screen explains where to find the link for Google, iCloud, Outlook and school portals. Calendar subscriptions sync through Firestore, so you add each one once and it appears on both devices.
@@ -204,7 +193,7 @@ lib/
   screens/calendar_page.dart The planner screen
   demo_main.dart             Sample-data entry point
   google/google_setup.dart   OAuth client IDs (fill in once)
-  google/google_connection.dart  Google sign-in (per device)
+  google/google_connection.dart  Google sign-in per device (Android: Google's sign-in; Mac: browser)
   google/google_calendars.dart   Google calendars: loading, create/move/delete (tested with a fake)
   google/google_calendar_client.dart  The Google Calendar API calls
   home_widget/agenda.dart    Rows for the Android home screen widget (unit-tested)

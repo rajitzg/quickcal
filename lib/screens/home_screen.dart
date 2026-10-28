@@ -88,7 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     if (widget.calendar == null) {
       _google = GoogleCalendars(
-        SignInGoogleConnection(),
+        GoogleConnection.forPlatform(),
         FirestoreGoogleSettings(widget.uid),
         // Saved for the home screen widget's background refresh.
         cacheFile: AgendaWidget.supported

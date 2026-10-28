@@ -1,12 +1,13 @@
 // OAuth client IDs for "Connect Google Calendar". Fill these in once (see
-// "Google Calendar setup" in README.md). Client IDs aren't secrets: they
-// only identify the app to Google.
+// "Google Calendar setup" in README.md). They only identify the app to
+// Google; for desktop apps Google doesn't treat the "secret" as secret.
 
-/// macOS: the iOS-type OAuth client ("…apps.googleusercontent.com"). Also
-/// put its reversed form in macos/Runner/Info.plist (see README).
-const googleAppleClientId = '';
-
-/// Android: the *Web*-type OAuth client of the same Google Cloud project
-/// (Google calls it the server client id). Android also needs your app's
-/// SHA-1 fingerprint registered (see README).
+/// Android: the *Web application* OAuth client of the same Google Cloud
+/// project (Google calls it the server client id). Android also needs your
+/// app's SHA-1 fingerprint registered (see README).
 const googleWebClientId = '';
+
+/// macOS: a *Desktop app* OAuth client, used for signing in through the
+/// browser.
+const googleDesktopClientId = '';
+const googleDesktopClientSecret = '';

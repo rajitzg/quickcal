@@ -100,7 +100,8 @@ class FakeGoogleCalendarClient implements GoogleCalendarClient {
 
 /// A [GoogleConnection] that's already connected to a fake client.
 class FakeGoogleConnection extends GoogleConnection {
-  FakeGoogleConnection(this.fake, {this.account = 'demo@gmail.com'});
+  FakeGoogleConnection(this.fake, {this.account = 'demo@gmail.com'})
+    : super.base();
   final FakeGoogleCalendarClient fake;
   String? account;
 
