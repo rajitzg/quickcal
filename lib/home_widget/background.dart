@@ -12,6 +12,8 @@ import '../logic/task_views.dart';
 import '../models/project_calendar.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
+import '../notifications/notifier.dart';
+import '../notifications/reminders.dart';
 import 'agenda.dart';
 
 const _taskName = 'refreshAgendaWidget';
@@ -106,21 +108,38 @@ Future<void> refreshWidgetInBackground() async {
     for (final p in projects)
       if (p.hidden) p.name,
   };
+  final open = [
+    for (final d in tasks.docs)
+      if (Task.fromMap(d.id, d.data()) case final t
+          when !hidden.contains(t.project.trim()))
+        t,
+  ];
+  final sessionList = [
+    for (final d in sessions.docs) WorkSession.fromMap(d.id, d.data()),
+  ];
   final rows = buildAgenda(
-    openTasks: [
-      for (final d in tasks.docs)
-        if (Task.fromMap(d.id, d.data()) case final t
-            when !hidden.contains(t.project.trim()))
-          t,
-    ],
-    sessions: [
-      for (final d in sessions.docs) WorkSession.fromMap(d.id, d.data()),
-    ],
+    openTasks: open,
+    sessions: sessionList,
     events: events,
     projectColor: projectColor,
     feedColor: (id) => calendars.feed(id)?.color ?? 0xFF616161,
     now: now,
   );
   await AgendaWidget.publish(rows, now);
+
+  // Reminders too, so changes made on other devices get them on time.
+  final reminders = await ReminderSettings.load();
+  if (reminders.enabled) {
+    await Notifier.instance.schedule(
+      buildReminders(
+        settings: reminders,
+        openTasks: open,
+        sessions: sessionList,
+        events: events,
+        feedName: (id) => calendars.feed(id)?.name ?? '',
+        now: now,
+      ),
+    );
+  }
   calendars.dispose();
 }

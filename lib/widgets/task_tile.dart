@@ -135,3 +135,47 @@ class SessionTile extends StatelessWidget {
     );
   }
 }
+
+/// Swipe [child] (a task or session row) to the right to mark its task
+/// done: quicker than aiming for the checkbox on a phone.
+class SwipeToComplete extends StatelessWidget {
+  const SwipeToComplete({
+    super.key,
+    required this.onComplete,
+    required this.child,
+  });
+
+  final VoidCallback onComplete;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Dismissible(
+      key: ValueKey(('swipe', key)),
+      direction: DismissDirection.startToEnd,
+      dismissThresholds: const {DismissDirection.startToEnd: 0.3},
+      background: ColoredBox(
+        color: scheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle, color: scheme.onPrimaryContainer),
+              const SizedBox(width: 12),
+              Text(
+                'Done',
+                style: TextStyle(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      onDismissed: (_) => onComplete(),
+      child: child,
+    );
+  }
+}

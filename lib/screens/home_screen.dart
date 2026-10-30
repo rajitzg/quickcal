@@ -14,6 +14,8 @@ import '../google/google_connection.dart';
 import '../home_widget/agenda.dart';
 import '../logic/task_views.dart';
 import '../models/project_calendar.dart';
+import '../notifications/notifier.dart';
+import '../notifications/reminders.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
@@ -22,6 +24,7 @@ import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
 import 'calendar_page.dart';
 import 'calendars_screen.dart';
+import 'notifications_screen.dart';
 
 enum _View {
   calendar(
@@ -99,7 +102,59 @@ class _HomeScreenState extends State<HomeScreen> {
       )..start();
       _calendar.attachGoogle(_google!);
     }
-    if (AgendaWidget.supported) _data.addListener(_scheduleWidgetUpdate);
+    if (AgendaWidget.supported || Notifier.supported) {
+      _data.addListener(_scheduleWidgetUpdate);
+    }
+    if (Notifier.supported && !_isDemo) {
+      ReminderSettings.load().then((s) {
+        _reminders = s;
+        _scheduleWidgetUpdate();
+      });
+    }
+  }
+
+  // ---- Reminders (notifications) ----
+  ReminderSettings _reminders = const ReminderSettings();
+  String? _scheduledReminders;
+
+  void _updateReminders() {
+    if (!Notifier.supported || _isDemo) return;
+    final now = DateTime.now();
+    final reminders = buildReminders(
+      settings: _reminders,
+      openTasks: [
+        for (final t in _store.openTasks)
+          if (!_store.project(t.project).hidden) t,
+      ],
+      sessions: _store.sessions,
+      events: _calendar.eventsBetween(now, now.add(const Duration(days: 7))),
+      feedName: (id) => _calendar.feed(id)?.name ?? '',
+      now: now,
+    );
+    // Most data changes don't change any reminder.
+    final signature = reminders.join('\n');
+    if (signature == _scheduledReminders) return;
+    _scheduledReminders = signature;
+    unawaited(
+      Notifier.instance
+          .schedule(reminders)
+          .catchError((Object e) => debugPrint('Reminders failed: $e')),
+    );
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => NotificationsScreen(
+          initial: _reminders,
+          onChanged: (s) {
+            _reminders = s;
+            unawaited(s.save());
+            _updateReminders();
+          },
+        ),
+      ),
+    );
   }
 
   /// Data changes come in bursts (one per collection on launch), so wait
@@ -111,6 +166,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _publishWidget() {
     if (!_store.loaded) return;
+    _updateReminders();
+    if (!AgendaWidget.supported) return;
     final now = DateTime.now();
     final today = dateOnly(now);
     final rows = buildAgenda(
@@ -248,13 +305,44 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  void _toggle(Task task, bool done) => _run(_store.setDone(task, done));
+  /// Tasks just completed here, hidden from the lists right away (before
+  /// the store catches up) so a swiped row disappears at once.
+  final _justDone = <String>{};
+
+  void _toggle(Task task, bool done) {
+    if (!done) return _run(_store.setDone(task, false));
+    HapticFeedback.lightImpact();
+    setState(() => _justDone.add(task.id));
+    _run(_store.setDone(task, true));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Done: ${task.title}'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              setState(() => _justDone.remove(task.id));
+              _run(_store.setDone(task, false));
+            },
+          ),
+        ),
+      );
+  }
 
   Widget _menu() => PopupMenuButton<String>(
-    onSelected: (v) =>
-        v == 'calendars' ? _openCalendars() : FirebaseAuth.instance.signOut(),
+    onSelected: (v) => switch (v) {
+      'calendars' => _openCalendars(),
+      'notifications' => _openNotifications(),
+      _ => FirebaseAuth.instance.signOut(),
+    },
     itemBuilder: (_) => [
       const PopupMenuItem(value: 'calendars', child: Text('Calendars…')),
+      if (Notifier.supported && !_isDemo)
+        const PopupMenuItem(
+          value: 'notifications',
+          child: Text('Notifications…'),
+        ),
       if (!_isDemo)
         PopupMenuItem(
           value: 'signout',
@@ -377,7 +465,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildOpen(_View view) {
-    final open = _store.openTasks;
+    final open = [
+      for (final t in _store.openTasks)
+        if (!_justDone.contains(t.id)) t,
+    ];
+    // Forget completions the store has caught up with.
+    _justDone.retainWhere((id) => _store.openTasks.any((t) => t.id == id));
     final now = DateTime.now();
     final today = dateOnly(now);
     final events = _calendar.eventsBetween(
@@ -428,20 +521,26 @@ class _HomeScreenState extends State<HomeScreen> {
             _header(s.title, s.tasks.length),
           for (final entry in agenda(s))
             switch (entry) {
-              TaskEntry(:final task) => TaskTile(
+              TaskEntry(:final task) => SwipeToComplete(
                 key: ValueKey(task.id),
-                task: task,
-                showProject: view != _View.projects,
-                onToggle: (v) => _toggle(task, v),
-                onTap: () => _edit(task),
+                onComplete: () => _toggle(task, true),
+                child: TaskTile(
+                  task: task,
+                  showProject: view != _View.projects,
+                  onToggle: (v) => _toggle(task, v),
+                  onTap: () => _edit(task),
+                ),
               ),
-              SessionEntry(:final session, :final task) => SessionTile(
+              SessionEntry(:final session, :final task) => SwipeToComplete(
                 key: ValueKey('${s.title}/${session.id}'),
-                session: session,
-                task: task,
-                color: _store.project(task.project).color,
-                onToggle: (v) => _toggle(task, v),
-                onTap: () => _edit(task),
+                onComplete: () => _toggle(task, true),
+                child: SessionTile(
+                  session: session,
+                  task: task,
+                  color: _store.project(task.project).color,
+                  onToggle: (v) => _toggle(task, v),
+                  onTap: () => _edit(task),
+                ),
               ),
               EventEntry(:final event) => EventTile(
                 key: ValueKey('${s.title}/${event.id}'),

@@ -9,6 +9,8 @@ A minimal, fast task list and planner for macOS and Android, synced through Fire
 - **Upcoming**: the next 7 days, each showing what's due and what's scheduled that day, then Later and Unscheduled
 - **Projects**: open tasks grouped by project (no project = Inbox). Projects are kept until you delete them, even with no open tasks. The folder button adds a new, empty project; **+** next to a project adds a task to it, and **⋯** renames, recolors or deletes it. Deleting a project moves its tasks to the Inbox.
 - **Done**: the 50 most recently completed tasks, which you can reopen
+- **Marking done**: tick the checkbox, or swipe a task or session to the right. It disappears at once, with **Undo** in case you swiped the wrong one.
+- **Reminders**: notifications before events, work sessions and due tasks (see [Notifications](#notifications)).
 - **Calendars**: classes and events from any iCal feed (Google, iCloud, Outlook, Canvas) appear on Today and Upcoming, interleaved with tasks by time. Tap an event to see details or to add a task for it. The event name becomes the task's project, so an assignment for "CS 201" files itself under that class.
 - Works offline. Firestore caches everything locally, so edits are instant and sync when you're back online.
 - ⌘N / Ctrl+N creates a new task.
@@ -119,6 +121,14 @@ On the Mac (any window at least 700px wide), the app opens on the **Calendar** v
 ### Try it without Firebase
 `flutter run -d macos -t lib/demo_main.dart` runs the full app on sample data in memory, with no sign-in. Changes reset when it restarts.
 
+## Notifications
+**⋮ → Notifications…** turns on reminders for that device. Each device is set separately, so the phone can remind you while the Mac stays quiet.
+- **What:** calendar events (not all-day ones), work sessions, and due tasks. Timed tasks are reminded before their due time; tasks due on a day are reminded at 9 AM that day. Hidden project calendars and calendars that are turned off get no reminders.
+- **When:** at the start, or 5, 10, 15, 30 or 60 minutes before.
+- **Mark done (Android):** work session and due-task notifications have a **Mark done** button. It completes the task without opening the app.
+- **How it works:** reminders are scheduled with the phone or Mac itself, from the data already on that device, so there's no server and no cost, and they work offline. The app reschedules them whenever something changes. On Android, the half-hourly background refresh (the same one that updates the widget) does too, so a session added on the Mac still gets a reminder on the phone without opening the app. On the Mac, reminders are updated while the app is running; ones already scheduled still appear after you quit.
+- **Android permissions:** Android asks once to allow notifications. Reminders use exact alarms so they arrive on time (allowed for calendar apps without asking). If they don't appear, check Settings → Apps → Taskflow → Notifications, and battery restrictions.
+
 ## Google Calendar
 Connect one or more Google accounts to see their calendars without iCal links, and to change them from Taskflow:
 - **Connecting:** under **Calendars…** → **Google Calendar** → **Connect**, then tick which calendars to show. Your choices sync between devices; you connect each account once on each device.
@@ -199,7 +209,9 @@ lib/
   google/google_calendars.dart   Google calendars: loading, create/move/delete (tested with a fake)
   google/google_calendar_client.dart  The Google Calendar API calls
   home_widget/agenda.dart    Rows for the Android home screen widget (unit-tested)
-  home_widget/background.dart  30-minute background refresh of the widget
+  home_widget/background.dart  30-minute background refresh of the widget (and reminders)
+  notifications/reminders.dart  Which reminders to schedule (unit-tested)
+  notifications/notifier.dart   Schedules them with the system; Mark done
 android/app/src/main/kotlin/…/AgendaWidget*.kt  The native widget that draws those rows
   screens/                   Sign-in and home (nav rail on Mac, bottom bar on phone)
   widgets/                   Task row and the add/edit sheet
@@ -208,5 +220,4 @@ test/
 Run the tests with `TZ=America/New_York flutter test`. Running them in a daylight-saving time zone exercises the DST handling.
 
 ## Next ideas
-- Due-time notifications (`flutter_local_notifications`)
 - Recurring tasks
