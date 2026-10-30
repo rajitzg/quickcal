@@ -380,13 +380,15 @@ class _GoogleSection extends StatelessWidget {
           child: Text('Google Calendar', style: theme.textTheme.titleSmall),
         ),
         if (!connection.configured)
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('Not set up yet'),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Not set up yet'),
             subtitle: Text(
-              'Google sign-in needs a one-time setup: see "Google Calendar '
-              'setup" in README.md. Until then, add Google calendars with '
-              'their iCal links below.',
+              'This build has no Google client ID: fill in '
+              '${theme.platform == TargetPlatform.android ? 'googleWebClientId (the Web application client)' : 'googleDesktopClientId and googleDesktopClientSecret'} '
+              'in lib/google/google_setup.dart, then rebuild (a hot reload '
+              'is not enough). See "Google Calendar setup" in README.md. '
+              'Until then, add Google calendars with their iCal links below.',
             ),
           )
         else if (!connection.connected)
