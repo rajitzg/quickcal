@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../calendar/calendar_controller.dart';
 import '../calendar/calendar_event.dart';
+import '../calendar/event_draft.dart';
 import '../data/planner_store.dart';
 import '../google/google_calendar_client.dart';
 import '../google/google_calendars.dart';
@@ -12,6 +13,7 @@ import '../logic/task_views.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
+import '../widgets/google_event_actions.dart';
 import '../widgets/task_panel.dart';
 import '../widgets/task_tile.dart';
 import '../widgets/week_calendar.dart';
@@ -259,7 +261,22 @@ class _CalendarPageState extends State<CalendarPage> {
     if (choice == null) return;
     _lastDestination = choice.googleCalendarKey;
     if (choice.googleCalendarKey case final calendarKey?) {
-      _run(google!.create(calendarKey, choice.title, start, end));
+      if (choice.moreOptions && mounted) {
+        return createGoogleEvent(
+          context,
+          google!,
+          start: start,
+          end: end,
+          title: choice.title,
+          calendarKey: calendarKey,
+        );
+      }
+      _run(
+        google!.create(
+          calendarKey,
+          EventDraft(title: choice.title, start: start, end: end),
+        ),
+      );
       return;
     }
     var task = choice.existing;
@@ -291,6 +308,10 @@ class _CalendarPageState extends State<CalendarPage> {
               ? 'Unscheduled "${s.title}"'
               : 'Removed session for "${s.title}"',
         ),
+        // Hide after a while even with an Undo button (Flutter keeps
+        // those until dismissed by default).
+        persist: false,
+        duration: const Duration(seconds: 6),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () => _run(store.saveSession(s)),
@@ -307,12 +328,17 @@ class _CalendarPageState extends State<CalendarPage> {
     if (task != null) return widget.editTask(task);
     final event = _event(item.id);
     if (event == null) return;
-    final addTask = await showEventDetails(
+    final action = await showEventDetails(
       context,
       event,
       widget.feeds?.feed(event.feedId),
     );
-    if (addTask == true && mounted) {
+    if (!mounted) return;
+    if (action == EventAction.edit) {
+      return editGoogleEvent(context, _google!, event);
+    }
+    if (action == EventAction.delete) return _deleteGoogleEvent(event);
+    if (action == EventAction.addTask) {
       await widget.editTask(
         Task(
           id: store.newTaskId(),
@@ -362,10 +388,15 @@ class _CalendarPageState extends State<CalendarPage> {
           const PopupMenuItem(value: 'delete', child: Text('Delete session')),
         ],
         if (googleEvent != null) ...[
+          const PopupMenuItem(value: 'edit-event', child: Text('Edit event…')),
           const PopupMenuDivider(),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: 'delete-event',
-            child: Text('Delete from Google Calendar'),
+            child: Text(
+              googleEvent.repeats
+                  ? 'Delete from Google Calendar…'
+                  : 'Delete from Google Calendar',
+            ),
           ),
         ],
       ],
@@ -393,8 +424,10 @@ class _CalendarPageState extends State<CalendarPage> {
         );
       case 'delete':
         _deleteSession(session!);
+      case 'edit-event':
+        await editGoogleEvent(context, _google!, googleEvent!);
       case 'delete-event':
-        _deleteGoogleEvent(googleEvent!);
+        await _deleteGoogleEvent(googleEvent!);
     }
   }
 
@@ -611,21 +644,9 @@ class _CalendarPageState extends State<CalendarPage> {
     if (e != null && e.editable) _deleteGoogleEvent(e);
   }
 
-  void _deleteGoogleEvent(CalendarEvent e) {
-    final google = _google!;
-    final calendarKey = google.calendarOf(e.feedId)!.key;
+  Future<void> _deleteGoogleEvent(CalendarEvent e) async {
     setState(() => _selectedId = null);
-    _run(google.delete(e));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Deleted "${e.title}" from Google Calendar'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () =>
-              _run(google.create(calendarKey, e.title, e.start, e.end)),
-        ),
-      ),
-    );
+    await deleteGoogleEvent(context, _google!, e);
   }
 
   Widget _toolbar(BuildContext context, List<DateTime> days) {
@@ -736,6 +757,7 @@ class _NewSessionChoice {
     this.title = '',
     this.project = '',
     this.googleCalendarKey,
+    this.moreOptions = false,
   });
   final Task? existing;
   final String title;
@@ -744,6 +766,10 @@ class _NewSessionChoice {
   /// Set when the block should be an event in this Google calendar (its
   /// [GoogleCalendarInfo.key]) instead of a work session for a task.
   final String? googleCalendarKey;
+
+  /// Open the full event editor (location, repeat, …) instead of creating
+  /// the event right away.
+  final bool moreOptions;
 }
 
 /// Asks what a block drawn on empty calendar space is for: an existing task
@@ -919,6 +945,18 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
         ),
       ),
       actions: [
+        if (toGoogle)
+          TextButton(
+            onPressed: () => Navigator.pop(
+              context,
+              _NewSessionChoice(
+                title: _title.trim(),
+                googleCalendarKey: _calendarId,
+                moreOptions: true,
+              ),
+            ),
+            child: const Text('More options'),
+          ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),

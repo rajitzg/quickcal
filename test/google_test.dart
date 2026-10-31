@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:taskflow/calendar/calendar_controller.dart';
 import 'package:taskflow/calendar/calendar_event.dart';
 import 'package:taskflow/calendar/calendar_feeds.dart';
+import 'package:taskflow/calendar/event_draft.dart';
 import 'package:taskflow/data/memory_planner_store.dart';
 import 'package:taskflow/google/fake_google.dart';
 import 'package:taskflow/google/google_calendar_client.dart';
@@ -183,9 +184,11 @@ void main() {
       final c = await controller(g);
       final pending = g.create(
         '$me/$me',
-        'Coffee',
-        DateTime(2026, 10, 28, 15),
-        DateTime(2026, 10, 28, 16),
+        EventDraft(
+          title: 'Coffee',
+          start: DateTime(2026, 10, 28, 15),
+          end: DateTime(2026, 10, 28, 16),
+        ),
       );
       expect(c.eventsBetween(from, to).map((e) => e.title), contains('Coffee'));
       await pending;
@@ -330,9 +333,11 @@ void main() {
       await controller(g);
       await g.create(
         '$school/$school',
-        'Grading',
-        DateTime(2026, 10, 30, 14),
-        DateTime(2026, 10, 30, 15),
+        EventDraft(
+          title: 'Grading',
+          start: DateTime(2026, 10, 30, 14),
+          end: DateTime(2026, 10, 30, 15),
+        ),
       );
       expect(schoolFake.calls, ['insert $school Grading']);
       expect(fake.calls, isEmpty);

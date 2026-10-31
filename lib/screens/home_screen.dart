@@ -19,6 +19,7 @@ import '../notifications/reminders.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
+import '../widgets/google_event_actions.dart';
 import '../widgets/project_dialog.dart';
 import '../widgets/task_editor.dart';
 import '../widgets/task_tile.dart';
@@ -236,6 +237,10 @@ class _HomeScreenState extends State<HomeScreen> {
               'Deleted "${task.title}"'
               '${n == 0 ? '' : ' and its $n ${n == 1 ? 'session' : 'sessions'}'}',
             ),
+            // Hide after a while even with an Undo button (Flutter keeps
+            // those until dismissed by default).
+            persist: false,
+            duration: const Duration(seconds: 6),
             action: SnackBarAction(
               label: 'Undo',
               onPressed: () => _run(_store.restoreTask(deleted)),
@@ -285,8 +290,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// project (e.g. a class) and its day as the due date.
   Future<void> _openEvent(CalendarEvent event) async {
     final feed = _calendar.feed(event.feedId);
-    final addTask = await showEventDetails(context, event, feed);
-    if (addTask != true || !mounted) return;
+    final action = await showEventDetails(context, event, feed);
+    if (!mounted) return;
+    if (_calendar.google case final google?) {
+      if (action == EventAction.edit) {
+        return editGoogleEvent(context, google, event);
+      }
+      if (action == EventAction.delete) {
+        return deleteGoogleEvent(context, google, event);
+      }
+    }
+    if (action != EventAction.addTask) return;
     await _edit(
       Task(
         id: _store.newTaskId(),
@@ -319,6 +333,10 @@ class _HomeScreenState extends State<HomeScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text('Done: ${task.title}'),
+          // Hide after a while even with an Undo button (Flutter keeps
+          // those until dismissed by default).
+          persist: false,
+          duration: const Duration(seconds: 6),
           action: SnackBarAction(
             label: 'Undo',
             onPressed: () {

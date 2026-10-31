@@ -17,6 +17,8 @@ class CalendarEvent {
     this.description = '',
     this.remoteId,
     this.editable = false,
+    this.seriesId,
+    this.originalStart,
   });
 
   /// Unique per occurrence: the event UID plus its start time.
@@ -44,6 +46,15 @@ class CalendarEvent {
   /// edit). iCal feeds are always read-only.
   final bool editable;
 
+  /// For an occurrence of a repeating Google event: the series' event id.
+  final String? seriesId;
+
+  /// For an occurrence of a repeating Google event: when it was scheduled
+  /// by the series' rule (differs from [start] if it was moved on its own).
+  final DateTime? originalStart;
+
+  bool get repeats => seriesId != null;
+
   bool overlaps(DateTime from, DateTime to) =>
       start.isBefore(to) && end.isAfter(from);
 
@@ -61,6 +72,8 @@ class CalendarEvent {
         description: description,
         remoteId: remoteId,
         editable: editable,
+        seriesId: seriesId,
+        originalStart: originalStart,
       );
 
   Map<String, Object?> toJson() => {
@@ -76,6 +89,8 @@ class CalendarEvent {
     'description': description,
     'remoteId': remoteId,
     'editable': editable,
+    'seriesId': seriesId,
+    'originalStart': originalStart?.toIso8601String(),
   };
 
   factory CalendarEvent.fromJson(Map<String, dynamic> j) => CalendarEvent(
@@ -91,6 +106,11 @@ class CalendarEvent {
     description: j['description'] as String? ?? '',
     remoteId: j['remoteId'] as String?,
     editable: j['editable'] as bool? ?? false,
+    seriesId: j['seriesId'] as String?,
+    originalStart: switch (j['originalStart']) {
+      final String s => DateTime.parse(s),
+      _ => null,
+    },
   );
 }
 

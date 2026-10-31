@@ -70,14 +70,19 @@ class EventTile extends StatelessWidget {
 
 /// Details sheet for an event. Pops with `true` if the user wants to add a
 /// task for it.
-Future<bool?> showEventDetails(
+/// What the user chose in [showEventDetails].
+enum EventAction { addTask, edit, delete }
+
+/// Details of [event]. Events in Google calendars you can edit also get
+/// Edit and Delete.
+Future<EventAction?> showEventDetails(
   BuildContext context,
   CalendarEvent event,
   CalendarFeed? feed,
 ) {
   final theme = Theme.of(context);
   final date = DateFormat.yMMMMEEEEd().format(event.start);
-  return showModalBottomSheet<bool>(
+  return showModalBottomSheet<EventAction>(
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
@@ -92,6 +97,16 @@ Future<bool?> showEventDetails(
               Text(event.title, style: theme.textTheme.titleLarge),
               const SizedBox(height: 8),
               Text('$date · ${formatEventTime(event, event.start)}'),
+              if (event.repeats) ...[
+                const SizedBox(height: 4),
+                const Row(
+                  children: [
+                    Icon(Icons.repeat, size: 16),
+                    SizedBox(width: 6),
+                    Text('Repeating event'),
+                  ],
+                ),
+              ],
               if (event.location.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(event.location),
@@ -105,13 +120,31 @@ Future<bool?> showEventDetails(
                 SelectableText(event.description.trim()),
               ],
               const SizedBox(height: 20),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.tonalIcon(
-                  onPressed: () => Navigator.pop(context, true),
-                  icon: const Icon(Icons.add_task),
-                  label: const Text('Add a task for this'),
-                ),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (event.editable) ...[
+                    TextButton.icon(
+                      onPressed: () =>
+                          Navigator.pop(context, EventAction.delete),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.pop(context, EventAction.edit),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit'),
+                    ),
+                  ],
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        Navigator.pop(context, EventAction.addTask),
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Add a task for this'),
+                  ),
+                ],
               ),
             ],
           ),

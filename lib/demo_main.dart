@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'calendar/calendar_controller.dart';
 import 'calendar/calendar_feeds.dart';
 import 'calendar/calendar_event.dart';
+import 'calendar/event_draft.dart';
 import 'data/memory_planner_store.dart';
 import 'google/fake_google.dart';
 import 'google/google_calendar_client.dart';
@@ -74,8 +75,28 @@ class _DemoAppState extends State<DemoApp> {
         'demo@gmail.com': [
           event('g1', 'Dinner with Sam', 4, 18.5, 20),
           event('g2', 'Gym', 6, 10, 11.5),
+          // A repeating event, every Thursday evening.
+          for (var week = -2; week <= 4; week++)
+            CalendarEvent(
+              id: 'run$week',
+              feedId: '',
+              title: 'Run club',
+              start: _at(4 + 7 * week, 7),
+              end: _at(4 + 7 * week, 8),
+              location: 'Green Lake',
+              remoteId: 'run_$week',
+              seriesId: 'run',
+              originalStart: _at(4 + 7 * week, 7),
+            ),
         ],
       },
+    );
+    fake.seriesById['run'] = EventSeries(
+      id: 'run',
+      start: _at(-10, 7),
+      end: _at(-10, 8),
+      allDay: false,
+      recurrence: const ['RRULE:FREQ=WEEKLY;BYDAY=TH'],
     );
     final school = FakeGoogleCalendarClient(
       const [
@@ -248,6 +269,7 @@ class _DemoAppState extends State<DemoApp> {
       debugShowCheckedModeBanner: false,
       theme: lightTheme,
       darkTheme: darkTheme,
+      builder: compactSnackBars,
       home: HomeScreen.demo(store: _store, calendar: _calendar),
     );
   }

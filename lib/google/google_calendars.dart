@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../calendar/calendar_event.dart';
 import '../calendar/calendar_feeds.dart';
+import '../calendar/event_draft.dart';
 import '../logic/task_views.dart';
 import 'google_calendar_client.dart';
 import 'google_connection.dart';
@@ -351,43 +352,35 @@ class GoogleCalendars extends ChangeNotifier {
   }
 
   // ---- Writing -------------------------------------------------------------
+  //
+  // One-off changes show at once and are undone if Google refuses them.
+  // Changes to repeating events touch many occurrences, so those are made
+  // in Google first and the calendar's events then reloaded.
 
   /// Adds an event to the calendar with [GoogleCalendarInfo.key]
   /// [calendarKey].
-  Future<void> create(
-    String calendarKey,
-    String title,
-    DateTime start,
-    DateTime end,
-  ) async {
+  Future<void> create(String calendarKey, EventDraft draft) async {
     final calendar = _byKey(calendarKey)!;
-    final local = CalendarEvent(
-      id: 'new-${_nextLocalId++}@${start.millisecondsSinceEpoch}',
-      feedId: '$feedPrefix$calendarKey',
-      title: title,
-      start: start,
-      end: end,
-      organizer: calendar.id.toLowerCase(),
+    if (draft.rule != null) {
+      final client = await _clientOrThrow(calendar.account);
+      await client.insert(calendar, draft);
+      await _reload(calendar);
+      return;
+    }
+    final local = _eventFromDraft(
+      calendar,
+      draft,
+      id: 'new-${_nextLocalId++}',
       editable: false, // until Google has given it an id
     );
     _put(calendarKey, local);
     try {
       final client = await _clientOrThrow(calendar.account);
-      final id = await client.insert(calendar.id, title, start, end);
+      final id = await client.insert(calendar, draft);
       _remove(calendarKey, local.id);
       _put(
         calendarKey,
-        CalendarEvent(
-          id: '$id@${start.millisecondsSinceEpoch}',
-          feedId: local.feedId,
-          uid: id,
-          organizer: local.organizer,
-          title: title,
-          start: start,
-          end: end,
-          remoteId: id,
-          editable: calendar.canWrite,
-        ),
+        _eventFromDraft(calendar, draft, id: id, editable: calendar.canWrite),
       );
     } catch (e) {
       _remove(calendarKey, local.id);
@@ -395,7 +388,28 @@ class GoogleCalendars extends ChangeNotifier {
     }
   }
 
-  /// Moves or resizes [event] in Google, through the account it came from.
+  CalendarEvent _eventFromDraft(
+    GoogleCalendarInfo calendar,
+    EventDraft draft, {
+    required String id,
+    required bool editable,
+  }) => CalendarEvent(
+    id: '$id@${draft.start.millisecondsSinceEpoch}',
+    feedId: '$feedPrefix${calendar.key}',
+    uid: id,
+    organizer: calendar.id.toLowerCase(),
+    title: draft.title,
+    start: draft.start,
+    end: draft.end,
+    allDay: draft.allDay,
+    location: draft.location,
+    description: draft.description,
+    remoteId: editable ? id : null,
+    editable: editable,
+  );
+
+  /// Moves or resizes [event] (just this occurrence, if it repeats), through
+  /// the account it came from.
   Future<void> move(CalendarEvent event, DateTime start, DateTime end) async {
     final calendar = calendarOf(event.feedId)!;
     final moved = event.copyWith(start: start, end: end);
@@ -409,16 +423,165 @@ class GoogleCalendars extends ChangeNotifier {
     }
   }
 
-  Future<void> delete(CalendarEvent event) async {
+  /// The series [event] is an occurrence of (for its repeat rule).
+  Future<EventSeries?> seriesOf(CalendarEvent event) async {
+    final seriesId = event.seriesId;
+    if (seriesId == null) return null;
     final calendar = calendarOf(event.feedId)!;
-    _remove(calendar.key, event.id);
-    try {
-      final client = await _clientOrThrow(calendar.account);
-      await client.delete(calendar.id, event.remoteId!);
-    } catch (e) {
-      _put(calendar.key, event);
-      rethrow;
+    final client = await _clientOrThrow(calendar.account);
+    return client.series(calendar.id, seriesId);
+  }
+
+  /// Changes [event] to [draft]. For a repeating event, [scope] says which
+  /// occurrences: like Google Calendar, "this and following" ends the
+  /// series before this one and starts a new series from it.
+  Future<void> update(
+    CalendarEvent event,
+    EventDraft draft, {
+    EditScope scope = EditScope.thisEvent,
+  }) async {
+    final calendar = calendarOf(event.feedId)!;
+    final client = await _clientOrThrow(calendar.account);
+    final seriesId = event.seriesId;
+
+    if (seriesId == null) {
+      // A one-off event (which may become a repeating one).
+      if (draft.rule == null) {
+        final changed = _eventFromDraft(
+          calendar,
+          draft,
+          id: event.remoteId!,
+          editable: true,
+        );
+        _replace(calendar.key, event.id, changed);
+        try {
+          await client.patch(calendar, event.remoteId!, draft: draft);
+        } catch (e) {
+          _replace(calendar.key, changed.id, event);
+          rethrow;
+        }
+        return;
+      }
+      await client.patch(
+        calendar,
+        event.remoteId!,
+        draft: draft,
+        recurrence: [draft.rule!],
+      );
+      return _reload(calendar);
     }
+
+    if (scope == EditScope.thisEvent) {
+      await client.patch(calendar, event.remoteId!, draft: draft);
+      return _reload(calendar);
+    }
+
+    final series = await client.series(calendar.id, seriesId);
+    final first = _isFirst(event, series);
+    if (scope == EditScope.all || first) {
+      // Keep the series' first date: apply the change in time to it.
+      final shift = draft.start.difference(event.start);
+      final start = series.start.add(shift);
+      final sameTimes =
+          shift == Duration.zero &&
+          draft.end.difference(draft.start) ==
+              series.end.difference(series.start);
+      await client.patch(
+        calendar,
+        seriesId,
+        draft: draft.copyWith(
+          start: start,
+          end: start.add(draft.end.difference(draft.start)),
+        ),
+        recurrence: draft.rule == null
+            ? const []
+            : [
+                draft.rule!,
+                // Excluded dates only still match if the times didn't move.
+                if (sameTimes) ...series.otherLines,
+              ],
+      );
+      return _reload(calendar);
+    }
+
+    // This and following: end the old series before this occurrence, and
+    // start a new one here with the changes.
+    final splitAt = event.originalStart ?? event.start;
+    await client.patch(
+      calendar,
+      seriesId,
+      recurrence: [
+        endRuleBefore(series.rule!, splitAt, allDay: series.allDay),
+        ...series.otherLines,
+      ],
+    );
+    final unchangedRule = draft.rule == series.rule;
+    await client.insert(
+      calendar,
+      draft.copyWith(
+        rule: () => unchangedRule && draft.rule != null
+            ? ruleFrom(draft.rule!, series.start, splitAt)
+            : draft.rule,
+      ),
+    );
+    return _reload(calendar);
+  }
+
+  /// Deletes [event]; for a repeating event, the occurrences [scope] says.
+  Future<void> delete(
+    CalendarEvent event, {
+    EditScope scope = EditScope.thisEvent,
+  }) async {
+    final calendar = calendarOf(event.feedId)!;
+    final seriesId = event.seriesId;
+    if (seriesId == null || scope == EditScope.thisEvent) {
+      _remove(calendar.key, event.id);
+      try {
+        final client = await _clientOrThrow(calendar.account);
+        await client.delete(calendar.id, event.remoteId!);
+      } catch (e) {
+        _put(calendar.key, event);
+        rethrow;
+      }
+      return;
+    }
+    final client = await _clientOrThrow(calendar.account);
+    final series = await client.series(calendar.id, seriesId);
+    if (scope == EditScope.all || _isFirst(event, series)) {
+      await client.delete(calendar.id, seriesId);
+    } else {
+      await client.patch(
+        calendar,
+        seriesId,
+        recurrence: [
+          endRuleBefore(
+            series.rule!,
+            event.originalStart ?? event.start,
+            allDay: series.allDay,
+          ),
+          ...series.otherLines,
+        ],
+      );
+    }
+    await _reload(calendar);
+  }
+
+  bool _isFirst(CalendarEvent event, EventSeries series) =>
+      !(event.originalStart ?? event.start).isAfter(series.start);
+
+  /// Reloads one calendar's events for the loaded dates.
+  Future<void> _reload(GoogleCalendarInfo calendar) async {
+    final loaded = _loaded;
+    if (loaded == null) return notifyListeners();
+    final client = await _clientOrThrow(calendar.account);
+    _events[calendar.key] = await client.events(
+      calendar,
+      loaded.$1,
+      loaded.$2,
+      feedId: '$feedPrefix${calendar.key}',
+    );
+    notifyListeners();
+    unawaited(_writeCache());
   }
 
   Future<GoogleCalendarClient> _clientOrThrow(String account) async {

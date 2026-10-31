@@ -203,6 +203,14 @@ void main() {
     expect(find.text('Done: Essay'), findsOneWidget);
     expect(find.text('Essay'), findsNothing);
 
+    // It goes away by itself, Undo button and all.
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(find.text('Done: Essay'), findsNothing);
+    await store.setDone(store.taskById('Essay')!, false);
+    await tester.pumpAndSettle();
+    await tester.drag(find.text('Essay'), const Offset(300, 0));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Undo'));
     await tester.pumpAndSettle();
     expect(store.taskById('Essay')!.done, isFalse);

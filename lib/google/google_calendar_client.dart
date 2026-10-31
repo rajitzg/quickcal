@@ -1,6 +1,7 @@
 import 'package:googleapis/calendar/v3.dart' as gcal;
 
 import '../calendar/calendar_event.dart';
+import '../calendar/event_draft.dart';
 
 /// One of the user's Google calendars.
 class GoogleCalendarInfo {
@@ -11,6 +12,7 @@ class GoogleCalendarInfo {
     required this.canWrite,
     this.primary = false,
     this.account = '',
+    this.timeZone,
   });
 
   /// The calendar's address, e.g. `you@gmail.com`.
@@ -23,6 +25,10 @@ class GoogleCalendarInfo {
   /// The user can add and change events (owner or writer).
   final bool canWrite;
   final bool primary;
+
+  /// The calendar's time zone (e.g. `America/Los_Angeles`). Repeating
+  /// events are created in it, so they keep their time across DST.
+  final String? timeZone;
 
   /// The connected Google account this calendar was listed by. The same
   /// calendar can be listed by two accounts (e.g. one shared with both).
@@ -38,6 +44,7 @@ class GoogleCalendarInfo {
     canWrite: canWrite,
     primary: primary,
     account: account,
+    timeZone: timeZone,
   );
 }
 
@@ -55,14 +62,15 @@ abstract class GoogleCalendarClient {
     required String feedId,
   });
 
-  /// Creates an event and returns its Google id.
+  /// Creates an event (repeating if [EventDraft.rule] is set) and returns
+  /// its Google id.
   Future<String> insert(
-    String calendarId,
-    String title,
-    DateTime start,
-    DateTime end,
-  );
+    GoogleCalendarInfo calendar,
+    EventDraft draft, {
+    List<String> extraRecurrence = const [],
+  });
 
+  /// Changes an event's time only.
   Future<void> move(
     String calendarId,
     String eventId,
@@ -70,6 +78,21 @@ abstract class GoogleCalendarClient {
     DateTime end,
   );
 
+  /// Changes an event (or a whole series, given its id). [draft] replaces
+  /// the title, times, location and description; [recurrence], when given,
+  /// replaces the repeat rule (empty: stop repeating).
+  Future<void> patch(
+    GoogleCalendarInfo calendar,
+    String eventId, {
+    EventDraft? draft,
+    List<String>? recurrence,
+  });
+
+  /// The series a repeating event's occurrences belong to.
+  Future<EventSeries> series(String calendarId, String seriesId);
+
+  /// Deletes an event, one occurrence (by its occurrence id), or a whole
+  /// series (by the series id).
   Future<void> delete(String calendarId, String eventId);
 }
 
@@ -93,6 +116,7 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
             color: parseHexColor(c.backgroundColor) ?? 0xFF3F51B5,
             canWrite: c.accessRole == 'owner' || c.accessRole == 'writer',
             primary: c.primary ?? false,
+            timeZone: c.timeZone,
           ),
         );
       }
@@ -151,25 +175,58 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
       description: e.description ?? '',
       remoteId: e.id,
       editable: calendar.canWrite,
+      seriesId: e.recurringEventId,
+      originalStart: switch (e.originalStartTime) {
+        final o? when o.date != null => _date(o.date!),
+        final o? => o.dateTime?.toLocal(),
+        null => null,
+      },
     );
   }
 
   /// All-day dates come back as plain dates; keep them as local midnight.
   static DateTime _date(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  static gcal.EventDateTime _at(DateTime t) =>
-      gcal.EventDateTime(dateTime: t.toUtc());
+  static gcal.EventDateTime _at(DateTime t, {String? timeZone}) =>
+      gcal.EventDateTime(dateTime: t.toUtc(), timeZone: timeZone);
+
+  static gcal.EventDateTime _day(DateTime d) =>
+      gcal.EventDateTime(date: DateTime.utc(d.year, d.month, d.day));
+
+  /// [draft] as a Google event. Repeating events need a time zone.
+  static gcal.Event _fromDraft(
+    EventDraft draft,
+    GoogleCalendarInfo calendar, {
+    List<String>? recurrence,
+  }) {
+    final zone = calendar.timeZone;
+    return gcal.Event(
+      summary: draft.title,
+      location: draft.location,
+      description: draft.description,
+      start: draft.allDay
+          ? _day(draft.start)
+          : _at(draft.start, timeZone: zone),
+      end: draft.allDay ? _day(draft.end) : _at(draft.end, timeZone: zone),
+      recurrence: recurrence,
+    );
+  }
 
   @override
   Future<String> insert(
-    String calendarId,
-    String title,
-    DateTime start,
-    DateTime end,
-  ) async {
+    GoogleCalendarInfo calendar,
+    EventDraft draft, {
+    List<String> extraRecurrence = const [],
+  }) async {
     final created = await _api.events.insert(
-      gcal.Event(summary: title, start: _at(start), end: _at(end)),
-      calendarId,
+      _fromDraft(
+        draft,
+        calendar,
+        recurrence: draft.rule == null
+            ? null
+            : [draft.rule!, ...extraRecurrence],
+      ),
+      calendar.id,
     );
     return created.id!;
   }
@@ -185,6 +242,33 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
     calendarId,
     eventId,
   );
+
+  @override
+  Future<void> patch(
+    GoogleCalendarInfo calendar,
+    String eventId, {
+    EventDraft? draft,
+    List<String>? recurrence,
+  }) => _api.events.patch(
+    draft == null
+        ? gcal.Event(recurrence: recurrence)
+        : _fromDraft(draft, calendar, recurrence: recurrence),
+    calendar.id,
+    eventId,
+  );
+
+  @override
+  Future<EventSeries> series(String calendarId, String seriesId) async {
+    final e = await _api.events.get(calendarId, seriesId);
+    final allDay = e.start?.date != null;
+    return EventSeries(
+      id: seriesId,
+      start: allDay ? _date(e.start!.date!) : e.start!.dateTime!.toLocal(),
+      end: allDay ? _date(e.end!.date!) : e.end!.dateTime!.toLocal(),
+      allDay: allDay,
+      recurrence: e.recurrence ?? const [],
+    );
+  }
 
   @override
   Future<void> delete(String calendarId, String eventId) =>

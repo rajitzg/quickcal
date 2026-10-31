@@ -135,6 +135,9 @@ Connect one or more Google accounts to see their calendars without iCal links, a
 - **Several accounts:** **Add another Google account** connects another one, e.g. a school account next to your personal one. Every account's calendars show together, and the sidebar lists them by account. A calendar shared with two of your accounts shows once. **Remove** next to an account disconnects only that account.
 - **New blocks:** a block drawn on empty space (or long-pressed on the phone) can be **a task in a project** or **an event in one of your Google calendars**, from any connected account. Pick it in the dialog's **Add to** field; with more than one account, each calendar is labeled with its account. The dialog remembers your last choice.
 - **Editing:** you can drag, resize and delete events in Google calendars you're allowed to edit (right-click → Delete, or select and press Delete). Changes go straight to Google, through the account the event came from, and are undone if Google refuses them. View-only calendars, like holidays, stay fixed.
+- **Full event details:** **More options** in the new-block dialog, or **Edit** on an event (in its details, or right-click → **Edit event…**), opens the full editor: title, calendar, all day, start and end, **repeat**, location and description. Repeat offers Google's presets (daily, weekly on that day, every weekday, monthly, annually) and **Custom…** (every N days/weeks/months/years, chosen weekdays, ending never, on a date, or after N times). A repeat rule the editor can't express, like "last Friday of the month", is kept as it is.
+- **Repeating events:** editing or deleting one asks, like Google Calendar, whether it's for **this event**, **this and following events**, or **all events**. "This and following" ends the series before that occurrence and, when editing, starts a new series from it. Changing the repeat rule itself can't apply to a single occurrence. Dragging an occurrence moves just that one.
+- **Messages at the bottom** (like "Deleted …  Undo") disappear after a few seconds, or right away with ✕.
 - **Updates:** changes made in Google Calendar itself appear within about 5 minutes while the app is open.
 - **No duplicates:** an iCal link to a calendar you've connected through Google is hidden, so nothing shows twice. You can delete the link.
 - **Home screen widget:** includes Google events. Its background refresh uses the events the app last loaded, since it can't sign in to Google on its own.
@@ -214,7 +217,8 @@ lib/
   notifications/notifier.dart   Schedules them with the system; Mark done
 android/app/src/main/kotlin/…/AgendaWidget*.kt  The native widget that draws those rows
   screens/                   Sign-in and home (nav rail on Mac, bottom bar on phone)
-  widgets/                   Task row and the add/edit sheet
+  widgets/                   Task row, the add/edit sheet, and the event editor
+  calendar/event_draft.dart  Repeat rules and splitting a series (unit-tested)
 test/
 ```
 Run the tests with `TZ=America/New_York flutter test`. Running them in a daylight-saving time zone exercises the DST handling.
