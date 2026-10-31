@@ -240,13 +240,29 @@ class _CalendarPageState extends State<CalendarPage> {
   /// Google calendar's key. The dialog starts there next time.
   String? _lastDestination;
 
+  /// The block just drawn, shown as a placeholder while the dialog asking
+  /// what it's for is open (the calendar itself lets go of it on release).
+  (DateTime, DateTime)? _newBlock;
+
   Future<void> _createFromSelection(DateTime start, DateTime end) async {
+    setState(() => _newBlock = (start, end));
+    try {
+      await _askAndCreate(start, end);
+    } finally {
+      // By now the real session or event (if any) is showing in its place.
+      if (mounted) setState(() => _newBlock = null);
+    }
+  }
+
+  Future<void> _askAndCreate(DateTime start, DateTime end) async {
     final google = _google;
     final calendars = google != null && google.connected
         ? google.writableCalendars
         : const <GoogleCalendarInfo>[];
     final choice = await showDialog<_NewSessionChoice>(
       context: context,
+      // Light, so the new block stays visible behind the dialog.
+      barrierColor: Colors.black12,
       builder: (_) => _NewSessionDialog(
         store: store,
         start: start,
@@ -495,6 +511,17 @@ class _CalendarPageState extends State<CalendarPage> {
           color: project.color,
           done: t.done,
           allDay: true,
+        ),
+      );
+    }
+    if (_newBlock case (final start, final end)) {
+      timed.add(
+        CalItem(
+          id: 'new-block',
+          start: start,
+          end: end,
+          title: '(No title)',
+          color: Theme.of(context).colorScheme.primary.toARGB32(),
         ),
       );
     }

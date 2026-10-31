@@ -434,6 +434,8 @@ void main() {
       await mouseDrag(tester, slot(tester, 4, 15), slot(tester, 4, 16));
       await tester.pumpAndSettle();
       expect(find.text('Add to'), findsOneWidget);
+      // The drawn block stays on the calendar while the dialog is open.
+      expect(find.text('(No title)'), findsOneWidget);
       await tester.tap(find.text('A task in a project'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Google · Lab').last);
@@ -445,6 +447,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(fake.calls, ['insert $lab Group study']);
       expect(find.text('Group study'), findsOneWidget);
+      expect(find.text('(No title)'), findsNothing);
       expect(store.sessions, isEmpty); // not a task session
     });
 
