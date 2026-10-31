@@ -82,6 +82,7 @@ class WeekCalendar extends StatefulWidget {
     this.onDropOutside,
     this.hourHeight = 48,
     this.dropDuration = const Duration(hours: 1),
+    this.dropDurationFor,
     this.now,
   });
 
@@ -130,6 +131,10 @@ class WeekCalendar extends StatefulWidget {
 
   final double hourHeight;
   final Duration dropDuration;
+
+  /// Length of the block for a dropped task, e.g. what's left of its
+  /// estimate; [dropDuration] when null.
+  final Duration Function(Task task)? dropDurationFor;
 
   /// Overrides the clock (tests).
   final DateTime? now;
@@ -364,7 +369,12 @@ class WeekCalendarState extends State<WeekCalendar>
           ..end = timeOn(day, hi.clamp(lo + 15, minutesPerDay).toDouble());
       case _Mode.drop:
         final day = days[dayIndex];
-        final length = widget.dropDuration.inMinutes;
+        final length =
+            ((op.task == null
+                        ? null
+                        : widget.dropDurationFor?.call(op.task!)) ??
+                    widget.dropDuration)
+                .inMinutes;
         final startMin = snapDown(minutes)
             .clamp(0, minutesPerDay - length)
             .toDouble();

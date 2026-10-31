@@ -12,6 +12,7 @@ class Task {
     this.done = false,
     this.completedAt,
     required this.createdAt,
+    this.estimate,
   });
 
   final String id;
@@ -31,6 +32,10 @@ class Task {
   final DateTime? completedAt;
   final DateTime createdAt;
 
+  /// How long you expect the task to take in total, to block out that much
+  /// time in work sessions before it's due. Null: not estimated.
+  final Duration? estimate;
+
   Task copyWith({
     String? title,
     String? notes,
@@ -41,6 +46,8 @@ class Task {
     bool? done,
     DateTime? completedAt,
     bool clearCompletedAt = false,
+    Duration? estimate,
+    bool clearEstimate = false,
   }) {
     return Task(
       id: id,
@@ -52,6 +59,7 @@ class Task {
       done: done ?? this.done,
       completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
       createdAt: createdAt,
+      estimate: clearEstimate ? null : (estimate ?? this.estimate),
     );
   }
 
@@ -66,6 +74,10 @@ class Task {
       done: data['done'] as bool? ?? false,
       completedAt: _toDate(data['completedAt']),
       createdAt: _toDate(data['createdAt']) ?? DateTime.now(),
+      estimate: switch (data['estimateMinutes']) {
+        final int m when m > 0 => Duration(minutes: m),
+        _ => null,
+      },
     );
   }
 
@@ -83,6 +95,7 @@ class Task {
           ? FieldValue.delete()
           : Timestamp.fromDate(completedAt!),
       'createdAt': Timestamp.fromDate(createdAt),
+      'estimateMinutes': estimate?.inMinutes ?? FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }

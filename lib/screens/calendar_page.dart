@@ -10,6 +10,7 @@ import '../google/google_calendar_client.dart';
 import '../google/google_calendars.dart';
 import '../logic/calendar_layout.dart';
 import '../logic/task_views.dart';
+import '../logic/time_blocking.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
@@ -499,15 +500,25 @@ class _CalendarPageState extends State<CalendarPage> {
       final project = store.project(t.project);
       if (project.hidden) continue;
       final day = dateOnly(due);
+      // How much of its estimate is blocked: "· 2h/5h", or ✓ when all of it.
+      final blocking = t.done
+          ? null
+          : blockingStatus(t, store.sessionsFor(t.id));
+      final progress = switch (blocking) {
+        null => '',
+        final b when b.complete => ' ✓',
+        final b =>
+          ' · ${formatDuration(b.blocked)}/${formatDuration(b.estimate)}',
+      };
       allDay.add(
         CalItem(
           id: 't:${t.id}',
           kind: CalKind.deadline,
           start: day,
           end: _dayAfter(day),
-          title: t.hasTime
-              ? '${DateFormat.jm().format(due).replaceAll(':00', '')} ${t.title}'
-              : t.title,
+          title:
+              '${t.hasTime ? '${DateFormat.jm().format(due).replaceAll(':00', '')} ' : ''}'
+              '${t.title}$progress',
           color: project.color,
           done: t.done,
           allDay: true,
@@ -642,6 +653,9 @@ class _CalendarPageState extends State<CalendarPage> {
                               }
                             },
                             onDropTask: _schedule,
+                            // What's left of the task's estimate.
+                            dropDurationFor: (t) =>
+                                blockLengthFor(t, store.sessionsFor(t.id)),
                           ),
                         ),
                         if (_isPhone)

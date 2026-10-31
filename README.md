@@ -75,6 +75,12 @@ A task has two separate kinds of dates, and the task editor shows them in separa
 
 On the phone, Today and Upcoming list each task on the days it's scheduled, as well as the day it's due. A task that's due and scheduled on the same day appears once.
 
+### Time needed and blocking it out
+Give a task a **Time needed** estimate in the editor (30m to 8h, or **Other…**). The task then shows how much of that time is **blocked out** in sessions before it's due: a thin bar with "2h of 5h blocked" in the sidebar, the task lists and the editor, and "· 2h/5h" on its deadline in the calendar's all-day row.
+- **Green ✓**: fully blocked. **Orange**: due within two days and not fully blocked. Sessions after the deadline don't count, and are listed as "after due".
+- **Dragging** the task onto the calendar makes a block sized to the time still needed (up to 3h, at least 30m), instead of 1h.
+- **Find time** (the ✨ button next to the bar) proposes sessions for the rest, in free time before the deadline (or within a week if there's none): between 9 AM and 10 PM, around your events and other sessions, one block per day first so the work is spread out. Choose the longest block (1–4h), untick any you don't want, and add them all at once.
+
 ## Calendar planner (desktop)
 On the Mac (any window at least 700px wide), the app opens on the **Calendar** view, styled after Notion Calendar.
 
@@ -213,6 +219,7 @@ lib/
   google/google_calendar_client.dart  The Google Calendar API calls
   home_widget/agenda.dart    Rows for the Android home screen widget (unit-tested)
   home_widget/background.dart  30-minute background refresh of the widget (and reminders)
+  logic/time_blocking.dart   Estimates vs. blocked time, and Find time (unit-tested)
   notifications/reminders.dart  Which reminders to schedule (unit-tested)
   notifications/notifier.dart   Schedules them with the system; Mark done
 android/app/src/main/kotlin/…/AgendaWidget*.kt  The native widget that draws those rows

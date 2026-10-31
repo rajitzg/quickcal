@@ -5,8 +5,11 @@ import '../calendar/calendar_feeds.dart';
 import '../data/planner_store.dart';
 import '../logic/calendar_layout.dart';
 import '../logic/task_views.dart';
+import '../logic/time_blocking.dart';
 import '../models/project_calendar.dart';
 import '../models/task.dart';
+import 'blocking_badge.dart';
+import 'find_time_dialog.dart';
 import 'project_dialog.dart';
 import 'task_tile.dart';
 
@@ -131,6 +134,9 @@ class _TaskPanelState extends State<TaskPanel> {
                         task: t,
                         color: p.color,
                         summary: summarize(store.sessionsFor(t.id), now),
+                        blocking: blockingStatus(t, store.sessionsFor(t.id)),
+                        onFindTime: () =>
+                            findTimeFor(context, store, widget.feeds, t),
                         onTap: () => widget.onEditTask(t),
                         onToggle: (v) => widget.onToggleTask(t, v),
                       ),
@@ -307,6 +313,8 @@ class _DraggableTaskCard extends StatelessWidget {
     required this.summary,
     required this.onTap,
     required this.onToggle,
+    this.blocking,
+    this.onFindTime,
   });
 
   final Task task;
@@ -314,6 +322,8 @@ class _DraggableTaskCard extends StatelessWidget {
   final SessionSummary summary;
   final VoidCallback onTap;
   final ValueChanged<bool> onToggle;
+  final BlockingStatus? blocking;
+  final VoidCallback? onFindTime;
 
   @override
   Widget build(BuildContext context) {
@@ -321,6 +331,8 @@ class _DraggableTaskCard extends StatelessWidget {
       task: task,
       color: color,
       summary: summary,
+      blocking: blocking,
+      onFindTime: onFindTime,
       onTap: onTap,
       onToggle: onToggle,
     );
@@ -335,7 +347,12 @@ class _DraggableTaskCard extends StatelessWidget {
             width: 220,
             child: Opacity(
               opacity: 0.9,
-              child: _TaskCard(task: task, color: color, summary: summary),
+              child: _TaskCard(
+                task: task,
+                color: color,
+                summary: summary,
+                blocking: blocking,
+              ),
             ),
           ),
         ),
@@ -351,6 +368,8 @@ class _TaskCard extends StatelessWidget {
     required this.task,
     required this.color,
     required this.summary,
+    this.blocking,
+    this.onFindTime,
     this.onTap,
     this.onToggle,
   });
@@ -358,6 +377,10 @@ class _TaskCard extends StatelessWidget {
   final Task task;
   final int color;
   final SessionSummary summary;
+
+  /// Estimated time vs. time blocked; null if the task has no estimate.
+  final BlockingStatus? blocking;
+  final VoidCallback? onFindTime;
   final VoidCallback? onTap;
   final ValueChanged<bool>? onToggle;
 
@@ -436,6 +459,15 @@ class _TaskCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (blocking case final b?) ...[
+                        const SizedBox(height: 6),
+                        BlockingBadge(
+                          status: b,
+                          now: now,
+                          dense: true,
+                          onFindTime: onFindTime,
+                        ),
+                      ],
                     ],
                   ),
                 ),

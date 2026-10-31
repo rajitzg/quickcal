@@ -136,6 +136,7 @@ class _DemoAppState extends State<DemoApp> {
       DateTime? due,
       bool hasTime = false,
       bool done = false,
+      double? hours,
     }) => Task(
       id: id,
       title: title,
@@ -145,6 +146,7 @@ class _DemoAppState extends State<DemoApp> {
       done: done,
       completedAt: done ? _now : null,
       createdAt: created,
+      estimate: hours == null ? null : Duration(minutes: (hours * 60).round()),
     );
     final tasks = [
       task('clutter', 'Run ClutterPlasticTask', 'Humanoid Safety'),
@@ -153,15 +155,16 @@ class _DemoAppState extends State<DemoApp> {
         'Look at issues in policy observations',
         'Composite Layup',
       ),
-      task('hw4', 'HW 4', 'CSE 446', due: _at(3, 0)),
+      task('hw4', 'HW 4', 'CSE 446', due: _at(3, 0), hours: 4),
       task(
         'proposal',
         'Project proposal',
         'CSE 446',
         due: _at(4, 23.75),
         hasTime: true,
+        hours: 3,
       ),
-      task('hw2', 'HW 2', 'CSE 422', due: _at(12, 17), hasTime: true),
+      task('hw2', 'HW 2', 'CSE 422', due: _at(12, 17), hasTime: true, hours: 6),
       task('bimanual', 'Find bimanual tasks', 'Humanoid Safety'),
       task(
         'cbf',

@@ -13,12 +13,14 @@ import '../google/google_calendars.dart';
 import '../google/google_connection.dart';
 import '../home_widget/agenda.dart';
 import '../logic/task_views.dart';
+import '../logic/time_blocking.dart';
 import '../models/project_calendar.dart';
 import '../notifications/notifier.dart';
 import '../notifications/reminders.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
 import '../widgets/event_tile.dart';
+import '../widgets/find_time_dialog.dart';
 import '../widgets/google_event_actions.dart';
 import '../widgets/project_dialog.dart';
 import '../widgets/task_editor.dart';
@@ -222,6 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
       projects: _store.projectNameSuggestions,
       sessions: _store.sessionsFor(task.id),
       newSessionId: _store.newSessionId,
+      busy: (from, to) => busyTimes(_store, _calendar, task.id, from, to),
     );
     switch (result) {
       case SaveTask(:final task, :final sessions):
@@ -544,6 +547,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onComplete: () => _toggle(task, true),
                 child: TaskTile(
                   task: task,
+                  blocking: blockingStatus(task, _store.sessionsFor(task.id)),
                   showProject: view != _View.projects,
                   onToggle: (v) => _toggle(task, v),
                   onTap: () => _edit(task),

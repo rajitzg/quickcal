@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../logic/task_views.dart';
+import '../logic/time_blocking.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
+import 'blocking_badge.dart';
 
 String formatDue(Task t, DateTime now) =>
     formatWhen(t.due!, now, withTime: t.hasTime);
@@ -33,9 +35,13 @@ class TaskTile extends StatelessWidget {
     required this.onToggle,
     required this.onTap,
     this.showProject = true,
+    this.blocking,
   });
 
   final Task task;
+
+  /// Estimated time vs. time blocked; null if the task has no estimate.
+  final BlockingStatus? blocking;
   final ValueChanged<bool> onToggle;
   final VoidCallback onTap;
   final bool showProject;
@@ -63,13 +69,24 @@ class TaskTile extends StatelessWidget {
               )
             : null,
       ),
-      subtitle: details.isEmpty
+      subtitle: details.isEmpty && blocking == null
           ? null
-          : Text(
-              details.join(' · '),
-              style: TextStyle(
-                color: isOverdue(task, now) ? scheme.error : null,
-              ),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (details.isNotEmpty)
+                  Text(
+                    details.join(' · '),
+                    style: TextStyle(
+                      color: isOverdue(task, now) ? scheme.error : null,
+                    ),
+                  ),
+                if (blocking case final b? when !task.done)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, right: 48),
+                    child: BlockingBadge(status: b, now: now, dense: true),
+                  ),
+              ],
             ),
       onTap: onTap,
     );

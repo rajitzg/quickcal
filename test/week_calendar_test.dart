@@ -42,6 +42,7 @@ class Recorder {
 Future<Recorder> pumpCalendar(
   WidgetTester tester, {
   List<CalItem>? items,
+  Duration Function(Task)? dropDurationFor,
 }) async {
   tester.view.physicalSize = const Size(1056, 900);
   tester.view.devicePixelRatio = 1;
@@ -80,6 +81,7 @@ Future<Recorder> pumpCalendar(
                 onChanged: (i, s, e) => r.changes.add((i.id, s, e)),
                 onCreate: (s, e) => r.creates.add((s, e)),
                 onDropTask: (t, s, e) => r.drops.add((t, s, e)),
+                dropDurationFor: dropDurationFor,
               ),
             ),
           ],
@@ -199,6 +201,24 @@ void main() {
     );
     expect(r.drops, [
       (task, DateTime(2026, 10, 29, 13), DateTime(2026, 10, 29, 14)),
+    ]);
+  });
+
+  testWidgets('a dropped task can get a block of its own length', (
+    tester,
+  ) async {
+    final r = await pumpCalendar(
+      tester,
+      dropDurationFor: (_) => const Duration(hours: 2, minutes: 30),
+    );
+    final grid = Grid(tester);
+    await mouseDrag(
+      tester,
+      tester.getCenter(find.text('drag me')),
+      grid.at(4, 13, 10),
+    );
+    expect(r.drops, [
+      (task, DateTime(2026, 10, 29, 13), DateTime(2026, 10, 29, 15, 30)),
     ]);
   });
 

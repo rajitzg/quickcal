@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../logic/calendar_layout.dart';
+import '../logic/time_blocking.dart';
 import '../logic/task_views.dart';
 import '../models/task.dart';
 import '../models/work_session.dart';
+import 'blocking_badge.dart';
+import 'find_time_dialog.dart';
 import 'task_tile.dart';
 
 sealed class EditorResult {}
@@ -27,6 +31,7 @@ Future<EditorResult?> showTaskEditor(
   required List<String> projects,
   required List<WorkSession> sessions,
   required String Function() newSessionId,
+  List<Slot> Function(DateTime from, DateTime to)? busy,
 }) {
   final editor = TaskEditor(
     task: task,
@@ -34,6 +39,7 @@ Future<EditorResult?> showTaskEditor(
     projects: projects,
     sessions: sessions,
     newSessionId: newSessionId,
+    busy: busy,
   );
   if (MediaQuery.sizeOf(context).width >= 700) {
     return showDialog<EditorResult>(
@@ -64,6 +70,7 @@ class TaskEditor extends StatefulWidget {
     required this.projects,
     required this.sessions,
     required this.newSessionId,
+    this.busy,
   });
 
   final Task task;
@@ -71,6 +78,10 @@ class TaskEditor extends StatefulWidget {
   final List<String> projects;
   final List<WorkSession> sessions;
   final String Function() newSessionId;
+
+  /// Times already taken (events, other tasks' sessions), for Find time.
+  /// Null hides Find time.
+  final List<Slot> Function(DateTime from, DateTime to)? busy;
 
   @override
   State<TaskEditor> createState() => _TaskEditorState();
@@ -82,6 +93,7 @@ class _TaskEditorState extends State<TaskEditor> {
   late String _project = widget.task.project;
   late DateTime? _due = widget.task.due;
   late bool _hasTime = widget.task.hasTime;
+  late Duration? _estimate = widget.task.estimate;
   late final List<WorkSession> _sessions = [...widget.sessions]
     ..sort((a, b) => a.start.compareTo(b.start));
 
@@ -102,6 +114,8 @@ class _TaskEditorState extends State<TaskEditor> {
       due: _due,
       clearDue: _due == null,
       hasTime: _hasTime,
+      estimate: _estimate,
+      clearEstimate: _estimate == null,
     );
     Navigator.pop(
       context,
@@ -192,6 +206,85 @@ class _TaskEditorState extends State<TaskEditor> {
             end: range.$2,
           ),
         )
+        ..sort((a, b) => a.start.compareTo(b.start));
+    });
+  }
+
+  /// The task as currently edited, for the blocking status.
+  Task get _edited => widget.task.copyWith(
+    due: _due,
+    clearDue: _due == null,
+    hasTime: _hasTime,
+    estimate: _estimate,
+    clearEstimate: _estimate == null,
+  );
+
+  static const _estimates = [30, 60, 120, 180, 300, 480];
+
+  Future<void> _otherEstimate() async {
+    final controller = TextEditingController(
+      text: _estimate == null ? '' : '${_estimate!.inMinutes / 60}',
+    );
+    final hours = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Time needed'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          decoration: const InputDecoration(suffixText: 'hours'),
+          onSubmitted: (v) => Navigator.pop(context, double.tryParse(v)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, double.tryParse(controller.text)),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (hours == null || hours <= 0) return;
+    // To the nearest quarter hour.
+    setState(
+      () => _estimate = Duration(minutes: ((hours * 60) / 15).round() * 15),
+    );
+  }
+
+  Future<void> _findTime(BlockingStatus status) async {
+    final busy = widget.busy!;
+    final slots = await showFindTimeDialog(
+      context,
+      task: _edited,
+      needed: status.remaining,
+      busy: (from, to) => [
+        ...busy(from, to),
+        for (final s in _sessions) (start: s.start, end: s.end),
+      ],
+    );
+    if (slots == null) return;
+    setState(() {
+      _sessions
+        ..addAll([
+          for (final slot in slots)
+            WorkSession(
+              id: widget.newSessionId(),
+              taskId: widget.task.id,
+              title: widget.task.title,
+              project: widget.task.project,
+              start: slot.start,
+              end: slot.end,
+            ),
+        ])
         ..sort((a, b) => a.start.compareTo(b.start));
     });
   }
@@ -303,6 +396,58 @@ class _TaskEditorState extends State<TaskEditor> {
                   ),
               ],
             ),
+
+            // ---- Time needed ----
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Icon(Icons.hourglass_empty, size: 18),
+                const SizedBox(width: 8),
+                Text('Time needed', style: label),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                ChoiceChip(
+                  label: const Text('None'),
+                  selected: _estimate == null,
+                  onSelected: (_) => setState(() => _estimate = null),
+                ),
+                for (final m in _estimates)
+                  ChoiceChip(
+                    label: Text(formatDuration(Duration(minutes: m))),
+                    selected: _estimate?.inMinutes == m,
+                    onSelected: (_) =>
+                        setState(() => _estimate = Duration(minutes: m)),
+                  ),
+                ChoiceChip(
+                  label: Text(
+                    _estimate != null &&
+                            !_estimates.contains(_estimate!.inMinutes)
+                        ? formatDuration(_estimate!)
+                        : 'Other…',
+                  ),
+                  selected:
+                      _estimate != null &&
+                      !_estimates.contains(_estimate!.inMinutes),
+                  onSelected: (_) => _otherEstimate(),
+                ),
+              ],
+            ),
+            if (blockingStatus(_edited, _sessions) case final status?)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: BlockingBadge(
+                  status: status,
+                  now: now,
+                  onFindTime: widget.busy == null
+                      ? null
+                      : () => _findTime(status),
+                ),
+              ),
 
             // ---- Scheduled sessions ----
             const SizedBox(height: 20),
