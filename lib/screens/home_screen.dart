@@ -296,6 +296,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final action = await showEventDetails(context, event, feed);
     if (!mounted) return;
     if (_calendar.google case final google?) {
+      if (action?.response case final response?) {
+        return respondToInvite(context, google, event, response);
+      }
       if (action == EventAction.edit) {
         return editGoogleEvent(context, google, event);
       }
@@ -525,7 +528,14 @@ class _HomeScreenState extends State<HomeScreen> {
         'project with the folder button above.',
       );
     }
-    if (sections.every((s) => s.isEmpty) && view == _View.today) {
+    // Invitations waiting for a reply, shown above Today and Upcoming.
+    final google = _calendar.google;
+    final invites = view == _View.projects || google == null
+        ? const <CalendarEvent>[]
+        : google.pendingInvites();
+    if (sections.every((s) => s.isEmpty) &&
+        view == _View.today &&
+        invites.isEmpty) {
       return _message(
         view == _View.today
             ? 'Nothing due today 🎉'
@@ -535,6 +545,25 @@ class _HomeScreenState extends State<HomeScreen> {
     final list = ListView(
       padding: const EdgeInsets.only(bottom: 88),
       children: [
+        if (invites.isNotEmpty)
+          Card.filled(
+            margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: ListTile(
+              leading: const Icon(Icons.mail_outline),
+              title: Text(
+                invites.length == 1
+                    ? '1 invitation'
+                    : '${invites.length} invitations',
+              ),
+              subtitle: Text(
+                invites.map((e) => e.title).take(3).join(', '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: const Text('Reply'),
+              onTap: () => showInvites(context, google!),
+            ),
+          ),
         for (final (i, s) in sections.indexed) ...[
           if (s.project case final project?)
             _projectHeader(_store.project(project), s.tasks.length)

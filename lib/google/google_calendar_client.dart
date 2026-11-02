@@ -94,6 +94,10 @@ abstract class GoogleCalendarClient {
   /// Deletes an event, one occurrence (by its occurrence id), or a whole
   /// series (by the series id).
   Future<void> delete(String calendarId, String eventId);
+
+  /// Replies to an invitation ([Rsvp]) for an event, one occurrence, or a
+  /// whole series (by its id).
+  Future<void> respond(String calendarId, String eventId, String response);
 }
 
 /// [GoogleCalendarClient] on the real Google Calendar API.
@@ -162,6 +166,9 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
     final start = allDay ? _date(e.start!.date!) : e.start?.dateTime?.toLocal();
     final end = allDay ? _date(e.end!.date!) : e.end?.dateTime?.toLocal();
     if (start == null || end == null) return null;
+    // An invitation: someone else organizes it and you're a guest.
+    final me = e.attendees?.where((a) => a.self ?? false).firstOrNull;
+    final invited = me != null && !(e.organizer?.self ?? false);
     return CalendarEvent(
       id: '${e.id}@${start.millisecondsSinceEpoch}',
       feedId: feedId,
@@ -174,7 +181,12 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
       location: e.location ?? '',
       description: e.description ?? '',
       remoteId: e.id,
-      editable: calendar.canWrite,
+      // Guests can only change the time if the organizer allows it.
+      editable: calendar.canWrite && (!invited || (e.guestsCanModify ?? false)),
+      response: invited ? (me.responseStatus ?? Rsvp.needsAction) : null,
+      organizerName: invited
+          ? (e.organizer?.displayName ?? e.organizer?.email)
+          : null,
       seriesId: e.recurringEventId,
       originalStart: switch (e.originalStartTime) {
         final o? when o.date != null => _date(o.date!),
@@ -273,6 +285,27 @@ class GoogleApiCalendarClient implements GoogleCalendarClient {
   @override
   Future<void> delete(String calendarId, String eventId) =>
       _api.events.delete(calendarId, eventId);
+
+  @override
+  Future<void> respond(
+    String calendarId,
+    String eventId,
+    String response,
+  ) async {
+    // The guest list is replaced as a whole, so change just your entry.
+    final event = await _api.events.get(calendarId, eventId);
+    final attendees = [
+      for (final a in event.attendees ?? const <gcal.EventAttendee>[])
+        if (a.self ?? false) (a..responseStatus = response) else a,
+    ];
+    await _api.events.patch(
+      gcal.Event(attendees: attendees),
+      calendarId,
+      eventId,
+      // Let the organizer know.
+      sendUpdates: 'all',
+    );
+  }
 }
 
 /// "#a4bdfc" → 0xFFA4BDFC.

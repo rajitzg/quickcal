@@ -48,6 +48,8 @@ Future<EditScope?> showScopeDialog(
   BuildContext context, {
   required bool deleting,
   bool allowThisEvent = true,
+  bool allowFollowing = true,
+  String? title,
 }) {
   var scope = allowThisEvent ? EditScope.thisEvent : EditScope.thisAndFollowing;
   return showDialog<EditScope>(
@@ -55,7 +57,8 @@ Future<EditScope?> showScopeDialog(
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(
-          deleting ? 'Delete recurring event' : 'Edit recurring event',
+          title ??
+              (deleting ? 'Delete recurring event' : 'Edit recurring event'),
         ),
         content: RadioGroup<EditScope>(
           groupValue: scope,
@@ -64,7 +67,8 @@ Future<EditScope?> showScopeDialog(
             mainAxisSize: MainAxisSize.min,
             children: [
               for (final s in EditScope.values)
-                if (s != EditScope.thisEvent || allowThisEvent)
+                if ((s != EditScope.thisEvent || allowThisEvent) &&
+                    (s != EditScope.thisAndFollowing || allowFollowing))
                   RadioListTile<EditScope>(
                     value: s,
                     title: Text(s.label),

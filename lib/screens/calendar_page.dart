@@ -351,6 +351,9 @@ class _CalendarPageState extends State<CalendarPage> {
       widget.feeds?.feed(event.feedId),
     );
     if (!mounted) return;
+    if (action?.response case final response?) {
+      return respondToInvite(context, _google!, event, response);
+    }
     if (action == EventAction.edit) {
       return editGoogleEvent(context, _google!, event);
     }
@@ -379,6 +382,10 @@ class _CalendarPageState extends State<CalendarPage> {
       final e? when e.editable => e,
       _ => null,
     };
+    final invite = switch (_event(item.id)) {
+      final e? when e.isInvite => e,
+      _ => null,
+    };
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final choice = await showMenu<String>(
@@ -403,6 +410,19 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'delete', child: Text('Delete session')),
+        ],
+        if (invite != null) ...[
+          const PopupMenuDivider(),
+          for (final (value, label, response) in [
+            ('rsvp-yes', 'Going: Yes', Rsvp.accepted),
+            ('rsvp-maybe', 'Going: Maybe', Rsvp.tentative),
+            ('rsvp-no', 'Going: No', Rsvp.declined),
+          ])
+            CheckedPopupMenuItem(
+              value: value,
+              checked: invite.response == response,
+              child: Text(label),
+            ),
         ],
         if (googleEvent != null) ...[
           const PopupMenuItem(value: 'edit-event', child: Text('Edit event…')),
@@ -441,6 +461,12 @@ class _CalendarPageState extends State<CalendarPage> {
         );
       case 'delete':
         _deleteSession(session!);
+      case 'rsvp-yes' || 'rsvp-maybe' || 'rsvp-no':
+        await respondToInvite(context, _google!, invite!, switch (choice) {
+          'rsvp-yes' => Rsvp.accepted,
+          'rsvp-maybe' => Rsvp.tentative,
+          _ => Rsvp.declined,
+        });
       case 'edit-event':
         await editGoogleEvent(context, _google!, googleEvent!);
       case 'delete-event':
@@ -490,6 +516,7 @@ class _CalendarPageState extends State<CalendarPage> {
         allDay: e.allDay,
         // Events in Google calendars you can edit move like sessions.
         editable: e.editable && !e.allDay,
+        pending: e.awaitingReply,
       );
       (e.allDay ? allDay : timed).add(item);
     }
@@ -783,6 +810,18 @@ class _CalendarPageState extends State<CalendarPage> {
                   ),
                 ),
               ),
+              if (_google case final google? when google.connected)
+                if (google.pendingInvites(now: widget.now) case final invites
+                    when invites.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Invitations',
+                    onPressed: () =>
+                        showInvites(context, google, now: widget.now),
+                    icon: Badge.count(
+                      count: invites.length,
+                      child: const Icon(Icons.mail_outline),
+                    ),
+                  ),
               ?widget.menu,
             ],
           ),

@@ -17,6 +17,7 @@ class CalItem {
     this.done = false,
     this.allDay = false,
     this.label = '',
+    this.pending = false,
   });
 
   final String id;
@@ -36,6 +37,9 @@ class CalItem {
   /// Small extra text, e.g. "2/3" for the second of three sessions.
   final String label;
 
+  /// An invitation not answered yet: drawn outlined, as in Google.
+  final bool pending;
+
   CalItem withRange(DateTime start, DateTime end) => CalItem(
     id: id,
     start: start,
@@ -47,6 +51,7 @@ class CalItem {
     done: done,
     allDay: allDay,
     label: label,
+    pending: pending,
   );
 }
 

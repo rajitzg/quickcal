@@ -1053,10 +1053,13 @@ class _EventBlock extends StatelessWidget {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
     final color = Color(item.color);
-    final bg = Color.alphaBlend(
-      color.withValues(alpha: dark ? 0.38 : 0.22),
-      theme.colorScheme.surface,
-    );
+    // An unanswered invitation is outlined instead of filled.
+    final bg = item.pending
+        ? theme.colorScheme.surface
+        : Color.alphaBlend(
+            color.withValues(alpha: dark ? 0.38 : 0.22),
+            theme.colorScheme.surface,
+          );
     final time = DateFormat.jm();
     final range =
         '${time.format(item.start).replaceAll(':00', '')}–'
@@ -1089,7 +1092,9 @@ class _EventBlock extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(5),
-        border: Border(left: BorderSide(color: color, width: 3)),
+        border: item.pending
+            ? Border.all(color: color, width: 1.5)
+            : Border(left: BorderSide(color: color, width: 3)),
         boxShadow: dragging
             ? [
                 BoxShadow(
@@ -1520,13 +1525,17 @@ class _AllDayChip extends StatelessWidget {
               height: 22,
               padding: const EdgeInsets.symmetric(horizontal: 6),
               decoration: BoxDecoration(
-                color: Color.alphaBlend(
-                  color.withValues(alpha: dark ? 0.38 : 0.22),
-                  theme.colorScheme.surface,
-                ),
+                color: item.pending
+                    ? theme.colorScheme.surface
+                    : Color.alphaBlend(
+                        color.withValues(alpha: dark ? 0.38 : 0.22),
+                        theme.colorScheme.surface,
+                      ),
                 borderRadius: BorderRadius.circular(5),
                 border: selected
                     ? Border.all(color: theme.colorScheme.onSurface, width: 1.5)
+                    : item.pending
+                    ? Border.all(color: color, width: 1.5)
                     : Border(left: BorderSide(color: color, width: 3)),
               ),
               child: Row(

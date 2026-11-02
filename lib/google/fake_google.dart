@@ -51,9 +51,11 @@ class FakeGoogleCalendarClient implements GoogleCalendarClient {
           location: e.location,
           description: e.description,
           remoteId: e.remoteId,
-          editable: calendar.canWrite,
+          editable: calendar.canWrite && !e.isInvite,
           seriesId: e.seriesId,
           originalStart: e.originalStart,
+          response: e.response,
+          organizerName: e.organizerName,
         ),
   ];
 
@@ -165,6 +167,23 @@ class FakeGoogleCalendarClient implements GoogleCalendarClient {
   @override
   Future<EventSeries> series(String calendarId, String seriesId) async =>
       seriesById[seriesId]!;
+
+  @override
+  Future<void> respond(
+    String calendarId,
+    String eventId,
+    String response,
+  ) async {
+    _maybeFail();
+    calls.add('respond $calendarId $eventId $response');
+    final list = eventsByCalendar[calendarId]!;
+    for (var i = 0; i < list.length; i++) {
+      final e = list[i];
+      if (e.remoteId == eventId || e.seriesId == eventId) {
+        list[i] = e.copyWith(response: response);
+      }
+    }
+  }
 
   @override
   Future<void> delete(String calendarId, String eventId) async {

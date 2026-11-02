@@ -41,6 +41,7 @@ class EventTile extends StatelessWidget {
     final color = Color(feed?.color ?? theme.colorScheme.primary.toARGB32());
     final past = event.end.isBefore(DateTime.now());
     final details = [
+      if (event.awaitingReply) 'Invitation',
       formatEventTime(event, day),
       if (event.location.isNotEmpty) event.location.split('\n').first,
     ];
@@ -71,7 +72,19 @@ class EventTile extends StatelessWidget {
 /// Details sheet for an event. Pops with `true` if the user wants to add a
 /// task for it.
 /// What the user chose in [showEventDetails].
-enum EventAction { addTask, edit, delete }
+enum EventAction {
+  addTask,
+  edit,
+  delete,
+  accept(Rsvp.accepted),
+  maybe(Rsvp.tentative),
+  decline(Rsvp.declined);
+
+  const EventAction([this.response]);
+
+  /// The invitation reply, for accept/maybe/decline.
+  final String? response;
+}
 
 /// Details of [event]. Events in Google calendars you can edit also get
 /// Edit and Delete.
@@ -114,6 +127,50 @@ Future<EventAction?> showEventDetails(
               if (feed != null) ...[
                 const SizedBox(height: 4),
                 Text(feed.name, style: TextStyle(color: Color(feed.color))),
+              ],
+              if (event.isInvite) ...[
+                const SizedBox(height: 12),
+                if (event.organizerName case final who?)
+                  Text('Invited by $who', style: theme.textTheme.bodySmall),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Text('Going?'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: SegmentedButton<EventAction>(
+                        // Nothing selected until you've answered.
+                        emptySelectionAllowed: true,
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(
+                            value: EventAction.accept,
+                            label: Text('Yes'),
+                          ),
+                          ButtonSegment(
+                            value: EventAction.maybe,
+                            label: Text('Maybe'),
+                          ),
+                          ButtonSegment(
+                            value: EventAction.decline,
+                            label: Text('No'),
+                          ),
+                        ],
+                        selected: {
+                          for (final a in [
+                            EventAction.accept,
+                            EventAction.maybe,
+                            EventAction.decline,
+                          ])
+                            if (a.response == event.response) a,
+                        },
+                        onSelectionChanged: (s) {
+                          if (s.isNotEmpty) Navigator.pop(context, s.first);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ],
               if (event.description.isNotEmpty) ...[
                 const SizedBox(height: 12),

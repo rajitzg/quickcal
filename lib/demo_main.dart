@@ -75,6 +75,18 @@ class _DemoAppState extends State<DemoApp> {
         'demo@gmail.com': [
           event('g1', 'Dinner with Sam', 4, 18.5, 20),
           event('g2', 'Gym', 6, 10, 11.5),
+          // An invitation waiting for a reply.
+          CalendarEvent(
+            id: 'inv',
+            feedId: '',
+            title: 'Thesis committee',
+            start: _at(4, 13),
+            end: _at(4, 14),
+            location: 'Allen Center 403',
+            remoteId: 'inv',
+            response: Rsvp.needsAction,
+            organizerName: 'Prof. Lee',
+          ),
           // A repeating event, every Thursday evening.
           for (var week = -2; week <= 4; week++)
             CalendarEvent(

@@ -253,9 +253,31 @@ class GoogleCalendars extends ChangeNotifier {
             calendarId: c.id.toLowerCase(),
             events: [
               for (final e in _events[c.key] ?? const <CalendarEvent>[])
-                if (e.overlaps(from, to)) e,
+                // Invitations you declined are hidden, as in Google.
+                if (e.overlaps(from, to) && e.response != Rsvp.declined) e,
             ],
           ),
+    ];
+  }
+
+  /// Invitations you haven't answered yet, from now on (as far as events
+  /// are loaded), soonest first. A repeating invitation is listed once.
+  List<CalendarEvent> pendingInvites({DateTime? now}) {
+    final from = now ?? DateTime.now();
+    final seen = <String>{};
+    final out = <CalendarEvent>[];
+    for (final c in calendars) {
+      if (!isShown(c)) continue;
+      for (final e in _events[c.key] ?? const <CalendarEvent>[]) {
+        if (!e.awaitingReply || !e.end.isAfter(from)) continue;
+        out.add(e);
+      }
+    }
+    out.sort((a, b) => a.start.compareTo(b.start));
+    return [
+      for (final e in out)
+        // Once per series, and once if two of your accounts are invited.
+        if (seen.add(e.seriesId ?? '${e.uid}@${e.start}')) e,
     ];
   }
 
@@ -564,6 +586,39 @@ class GoogleCalendars extends ChangeNotifier {
       );
     }
     await _reload(calendar);
+  }
+
+  /// Replies to the invitation [event]: just this occurrence, or for a
+  /// repeating event with [all], the whole series.
+  Future<void> respond(
+    CalendarEvent event,
+    String response, {
+    bool all = false,
+  }) async {
+    final calendar = calendarOf(event.feedId)!;
+    final seriesId = event.seriesId;
+    final everyOccurrence = all && seriesId != null;
+    final before = [...?_events[calendar.key]];
+    final list = _events[calendar.key] ?? [];
+    for (var i = 0; i < list.length; i++) {
+      final e = list[i];
+      if (e.id == event.id || (everyOccurrence && e.seriesId == seriesId)) {
+        list[i] = e.copyWith(response: response);
+      }
+    }
+    notifyListeners();
+    try {
+      final client = await _clientOrThrow(calendar.account);
+      await client.respond(
+        calendar.id,
+        everyOccurrence ? seriesId : event.remoteId!,
+        response,
+      );
+    } catch (e) {
+      _events[calendar.key] = before;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   bool _isFirst(CalendarEvent event, EventSeries series) =>

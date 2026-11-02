@@ -19,6 +19,8 @@ class CalendarEvent {
     this.editable = false,
     this.seriesId,
     this.originalStart,
+    this.response,
+    this.organizerName,
   });
 
   /// Unique per occurrence: the event UID plus its start time.
@@ -55,26 +57,44 @@ class CalendarEvent {
 
   bool get repeats => seriesId != null;
 
+  /// For an event you're invited to (a Google event someone else
+  /// organizes): your reply, one of [Rsvp]'s values. Null otherwise.
+  final String? response;
+
+  /// Who sent the invitation (name, or address if there's no name).
+  final String? organizerName;
+
+  bool get isInvite => response != null;
+
+  /// An invitation you haven't answered yet.
+  bool get awaitingReply => response == Rsvp.needsAction;
+
   bool overlaps(DateTime from, DateTime to) =>
       start.isBefore(to) && end.isAfter(from);
 
-  CalendarEvent copyWith({String? title, DateTime? start, DateTime? end}) =>
-      CalendarEvent(
-        id: id,
-        feedId: feedId,
-        uid: uid,
-        organizer: organizer,
-        title: title ?? this.title,
-        start: start ?? this.start,
-        end: end ?? this.end,
-        allDay: allDay,
-        location: location,
-        description: description,
-        remoteId: remoteId,
-        editable: editable,
-        seriesId: seriesId,
-        originalStart: originalStart,
-      );
+  CalendarEvent copyWith({
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    String? response,
+  }) => CalendarEvent(
+    id: id,
+    feedId: feedId,
+    uid: uid,
+    organizer: organizer,
+    title: title ?? this.title,
+    start: start ?? this.start,
+    end: end ?? this.end,
+    allDay: allDay,
+    location: location,
+    description: description,
+    remoteId: remoteId,
+    editable: editable,
+    seriesId: seriesId,
+    originalStart: originalStart,
+    response: response ?? this.response,
+    organizerName: organizerName,
+  );
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -91,6 +111,8 @@ class CalendarEvent {
     'editable': editable,
     'seriesId': seriesId,
     'originalStart': originalStart?.toIso8601String(),
+    'response': response,
+    'organizerName': organizerName,
   };
 
   factory CalendarEvent.fromJson(Map<String, dynamic> j) => CalendarEvent(
@@ -111,7 +133,17 @@ class CalendarEvent {
       final String s => DateTime.parse(s),
       _ => null,
     },
+    response: j['response'] as String?,
+    organizerName: j['organizerName'] as String?,
   );
+}
+
+/// Replies to an invitation, as Google Calendar names them.
+abstract final class Rsvp {
+  static const needsAction = 'needsAction';
+  static const accepted = 'accepted';
+  static const tentative = 'tentative';
+  static const declined = 'declined';
 }
 
 /// Safety cap on occurrences generated per series.
