@@ -222,41 +222,15 @@ class _TaskEditorState extends State<TaskEditor> {
   static const _estimates = [30, 60, 120, 180, 300, 480];
 
   Future<void> _otherEstimate() async {
-    final controller = TextEditingController(
-      text: _estimate == null ? '' : '${_estimate!.inMinutes / 60}',
-    );
     final hours = await showDialog<double>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Time needed'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-          ],
-          decoration: const InputDecoration(suffixText: 'hours'),
-          onSubmitted: (v) => Navigator.pop(context, double.tryParse(v)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, double.tryParse(controller.text)),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+      builder: (_) => _EstimateDialog(initial: _estimate),
     );
-    controller.dispose();
-    if (hours == null || hours <= 0) return;
-    // To the nearest quarter hour.
+    if (hours == null || hours <= 0 || !mounted) return;
+    // To the nearest quarter hour (at least one).
+    final quarters = (hours * 4).round();
     setState(
-      () => _estimate = Duration(minutes: ((hours * 60) / 15).round() * 15),
+      () => _estimate = Duration(minutes: 15 * (quarters < 1 ? 1 : quarters)),
     );
   }
 
@@ -680,4 +654,53 @@ class _SessionDialogState extends State<_SessionDialog> {
       ],
     );
   }
+}
+
+/// Asks for a custom "Time needed" in hours (e.g. 4 or 1.5).
+class _EstimateDialog extends StatefulWidget {
+  const _EstimateDialog({this.initial});
+  final Duration? initial;
+
+  @override
+  State<_EstimateDialog> createState() => _EstimateDialogState();
+}
+
+class _EstimateDialogState extends State<_EstimateDialog> {
+  // Owned by the dialog, so it outlives the closing animation.
+  late final _hours = TextEditingController(
+    text: switch (widget.initial) {
+      null => '',
+      // "4" rather than "4.0".
+      final d when d.inMinutes % 60 == 0 => '${d.inHours}',
+      final d => '${d.inMinutes / 60}',
+    },
+  );
+
+  @override
+  void dispose() {
+    _hours.dispose();
+    super.dispose();
+  }
+
+  void _done() => Navigator.pop(context, double.tryParse(_hours.text));
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Time needed'),
+    content: TextField(
+      controller: _hours,
+      autofocus: true,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+      decoration: const InputDecoration(suffixText: 'hours'),
+      onSubmitted: (_) => _done(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _done, child: const Text('OK')),
+    ],
+  );
 }
